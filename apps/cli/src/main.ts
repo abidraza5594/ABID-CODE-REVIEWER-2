@@ -74,7 +74,7 @@ async function main() {
       console.log(result.renderedFindings);
 
       // Ask whether to post.
-      const postable = result.findings.filter((f) => f.stage === 'rewritten' || f.stage === 'clustered');
+      const postable = result.findings.filter((f) => f.stage === 'rewritten');
       if (postable.length > 0) {
         const ans = (await rl.question(
           kleur.cyan(`\nPost ${postable.length} comment(s) to ADO PR #${parsed.pullRequestId}? `) +
@@ -82,8 +82,15 @@ async function main() {
         )).trim().toLowerCase();
         if (ans === 'y' || ans === 'yes') {
           try {
-            const posted = await result.postNow();
-            console.log(kleur.green(`✓ Posted ${posted} comment(s) to ADO.`));
+            const post = await result.postNow();
+            const missed = post.skipped.length + post.failed.length;
+            if (missed === 0) {
+              console.log(kleur.green(`OK Posted ${post.posted} comment(s) to ADO.`));
+            } else if (post.posted > 0) {
+              console.log(kleur.yellow(`Posted ${post.posted}/${post.attempted} comment(s). ${missed} skipped or failed.`));
+            } else {
+              console.log(kleur.red(`Posted 0/${post.attempted} comment(s). ${missed} skipped or failed. See details above.`));
+            }
           } catch (err) {
             console.log(kleur.red(`✗ Posting failed: ${(err as Error).message}`));
           }

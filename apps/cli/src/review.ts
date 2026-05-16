@@ -27,7 +27,14 @@ export interface ReviewOutput {
   renderedFindings: string;
   summaryLine: string;
   /** Call this only after the user confirms; posts to ADO. */
-  postNow: () => Promise<number>;
+  postNow: () => Promise<PostSummary>;
+}
+
+export interface PostSummary {
+  attempted: number;
+  posted: number;
+  skipped: Array<{ file: string; line: number; reason: string }>;
+  failed: Array<{ file: string; line: number; error: string }>;
 }
 
 /**
@@ -96,7 +103,7 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
         findings: [],
         renderedFindings: renderFindings([]),
         summaryLine: kleur.dim('No issues found by the static rules.'),
-        postNow: async () => 0,
+        postNow: async () => emptyPostSummary(),
       };
     }
 
@@ -181,17 +188,16 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
     }
 
     const postable = findings.filter((f) => f.stage === 'rewritten');
-    const summarized = findings.filter(
-      (f) => f.stage === 'clustered' && classify(f.ruleId, f.confidence) === 'summarize',
-    );
+    const summarized = findings.filter((f) => f.stage === 'summarized');
+    const dropped = findings.filter((f) => f.stage === 'dropped');
 
     return {
       findings,
       renderedFindings: renderFindings(findings),
       summaryLine:
-        kleur.bold(`\n${postable.length} post · ${summarized.length} summary-only · ${findings.length - postable.length - summarized.length} dropped`),
+        kleur.bold(`\n${postable.length} post | ${summarized.length} summary-only | ${dropped.length} dropped`),
       postNow: async () => {
-        const iterationId = await ado.getIteration({
+        const prRef = {
           tenantId: 'cli',
           organization: pr.organization,
           project: pr.project,
@@ -202,30 +208,36 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
           targetRef: prDetails.targetRef,
           sourceSha: prDetails.sourceSha,
           baseSha: prDetails.baseSha,
-        });
-        let count = 0;
+        };
+        const iterationId = await ado.getIteration(prRef);
+        const changeTrackingIds = await ado.getChangeTrackingMap(prRef, iterationId);
+        detail(`${changeTrackingIds.size} ADO change tracking id(s) loaded`);
+
+        const summary: PostSummary = { attempted: postable.length, posted: 0, skipped: [], failed: [] };
         for (const f of postable) {
-          const result = await postFinding(
-            ado,
-            {
-              tenantId: 'cli',
-              organization: pr.organization,
-              project: pr.project,
-              repositoryId: prDetails.repositoryId,
-              repositoryName: pr.repo,
-              pullRequestId: pr.pullRequestId,
-              sourceRef: prDetails.sourceRef,
-              targetRef: prDetails.targetRef,
-              sourceSha: prDetails.sourceSha,
-              baseSha: prDetails.baseSha,
-            },
-            f,
-            diff,
-            { iterationId, includeSuggestionBlock: true },
-          );
-          if (result.posted) count++;
+          try {
+            const result = await postFinding(
+              ado,
+              prRef,
+              f,
+              diff,
+              { iterationId, changeTrackingIds, includeSuggestionBlock: true },
+            );
+            if (result.posted) {
+              summary.posted++;
+              detail(kleur.green(`  OK ${f.location.file}:${f.location.startLine} -> thread ${result.threadId}`));
+            } else {
+              const reason = result.reason ?? 'not-postable';
+              summary.skipped.push({ file: f.location.file, line: f.location.startLine, reason });
+              detail(kleur.yellow(`  SKIP ${f.location.file}:${f.location.startLine} -> ${reason}`));
+            }
+          } catch (err) {
+            const error = (err as Error).message.slice(0, 200);
+            summary.failed.push({ file: f.location.file, line: f.location.startLine, error });
+            detail(kleur.red(`  FAIL ${f.location.file}:${f.location.startLine} -> ADO error: ${error}`));
+          }
         }
-        return count;
+        return summary;
       },
     };
   } finally {
@@ -319,8 +331,12 @@ function emptyResult(message: string): ReviewOutput {
     findings: [],
     renderedFindings: kleur.dim(message),
     summaryLine: '',
-    postNow: async () => 0,
+    postNow: async () => emptyPostSummary(),
   };
+}
+
+function emptyPostSummary(): PostSummary {
+  return { attempted: 0, posted: 0, skipped: [], failed: [] };
 }
 
 function step(label: string): void {

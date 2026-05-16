@@ -101,8 +101,21 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
     const dedup = await dedupFindings(findings, embedder, context.imports);
     findings = dedup.outFindings;
 
-    // 9) Voice rewrite — only for findings that will be posted.
-    const toPost = findings.filter((f) => f.stage === 'clustered' && classify(f.ruleId, f.confidence) === 'post');
+    // 9) Voice rewrite only for findings that will be posted. Low-confidence
+    // findings stay available for the PR summary but are not posted inline.
+    for (const f of findings) {
+      if (f.stage !== 'clustered') continue;
+      const disposition = classify(f.ruleId, f.confidence);
+      if (disposition === 'drop') {
+        f.stage = 'dropped';
+        f.dispositionReason = 'below-confidence-floor';
+      } else if (disposition === 'summarize') {
+        f.stage = 'summarized';
+        f.dispositionReason = 'below-confidence-floor';
+      }
+    }
+
+    const toPost = findings.filter((f) => f.stage === 'clustered');
     for (const f of toPost) {
       const r = await rewriteFinding(f, { mistral, prompts });
       if (!r.ok) {
@@ -118,15 +131,17 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
 
     // 10) Post inline comments.
     const iterationId = await ado.getIteration(job.pr);
+    const changeTrackingIds = await ado.getChangeTrackingMap(job.pr, iterationId);
     let posted = 0;
     for (const f of toPost) {
       if (f.stage !== 'rewritten') continue;
-      const result = await postFinding(ado, job.pr, f, diff, { iterationId, includeSuggestionBlock: true });
+      const result = await postFinding(ado, job.pr, f, diff, { iterationId, changeTrackingIds, includeSuggestionBlock: true });
       if (result.posted) {
         posted++;
         f.stage = 'posted';
       } else {
         f.stage = 'dropped';
+        f.notes = `ADO post skipped: ${result.reason ?? 'not-postable'}`;
       }
     }
 
@@ -136,7 +151,7 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
         prTitle: `PR #${job.pr.pullRequestId}`,
         filesChangedCount: [...diff.files()].length,
         posted: findings.filter((f) => f.stage === 'posted'),
-        summarized: findings.filter((f) => classify(f.ruleId, f.confidence) === 'summarize'),
+        summarized: findings.filter((f) => f.stage === 'summarized'),
       },
       { mistral, prompts },
     );

@@ -38,24 +38,13 @@ export const subscriptionLeakRule = {
           // ngOnDestroy unsubscribes from?
           if (sub.assignedToField && hasManualCleanup(comp, sub.assignedToField)) continue;
 
+          // IMPORTANT: we do NOT add a guarantee just because the component has
+          // ngOnDestroy or DestroyRef somewhere. Having those mechanisms exist
+          // anywhere in the class doesn't prove THIS subscription is cleaned up.
+          // The early-return paths above (`hasTakeUntil`, `assignedToField with
+          // manual cleanup in ngOnDestroy`) already cover the cases where this
+          // specific subscription is guaranteed to be cleaned up.
           const guarantees: Guarantee[] = [];
-          if (comp.destroy.usesTakeUntilDestroyed) {
-            // The file imports takeUntilDestroyed but didn't use it here — half-credit.
-            // We DO NOT downgrade for "intent to use"; the bug is using subscribe without it.
-          }
-          if (comp.destroy.hasDestroyRef && comp.destroy.destroyRefField) {
-            guarantees.push({
-              kind: 'destroy-hook',
-              pattern: 'DestroyRef.onDestroy',
-              declaringFile: comp.tsFile,
-            });
-          } else if (comp.destroy.hasNgOnDestroy) {
-            guarantees.push({
-              kind: 'destroy-hook',
-              pattern: 'ngOnDestroy',
-              declaringFile: comp.tsFile,
-            });
-          }
 
           const evidence: Evidence[] = [
             {

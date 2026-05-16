@@ -45,6 +45,31 @@ describe('parseUnifiedDiff', () => {
     expect(result.postable).toBe(true);
   });
 
+  it('allows inline posting anywhere in a changed file by default', () => {
+    const parsed = parseUnifiedDiff(SAMPLE);
+    const index = new DiffIndex(parsed);
+    const result = isPostable(
+      { file: 'src/app/user.component.ts', startLine: 200 },
+      index,
+    );
+    expect(result.postable).toBe(true);
+    expect(result.reason).toBe('ok-file-in-diff');
+    expect(result.inChangedHunk).toBe(false);
+  });
+
+  it('can still enforce changed-hunk-only posting when requested', () => {
+    const parsed = parseUnifiedDiff(SAMPLE);
+    const index = new DiffIndex(parsed);
+    const result = isPostable(
+      { file: 'src/app/user.component.ts', startLine: 20 },
+      index,
+      { requireChangedHunk: true },
+    );
+    expect(result.postable).toBe(false);
+    expect(result.reason).toBe('line-not-in-changed-hunk');
+    expect(result.fallbackLine).toBeDefined();
+  });
+
   it('rejects posting on a file not in the diff', () => {
     const parsed = parseUnifiedDiff(SAMPLE);
     const index = new DiffIndex(parsed);

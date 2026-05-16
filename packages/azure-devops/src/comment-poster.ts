@@ -4,14 +4,16 @@ import { isPostable } from '@abid/git-diff-engine';
 import type { AdoClient, AdoThreadRequest } from './client.js';
 
 /**
- * Translate a stage-'clustered' Finding into an ADO thread and post it.
+ * Translate a post-ready Finding into an ADO thread and post it.
  * Returns the posted thread id.
  *
  * Rules:
- *   - We never post on lines outside a changed hunk.
+ *   - We never post on deleted/binary/files-outside-the-PR-diff.
  *   - We never post the same comment twice in one PR iteration. The caller
  *     is responsible for passing a fingerprint set; if a fingerprint is
  *     already present, we skip silently.
+ *   - When the caller passes ADO change tracking IDs, every inline comment must
+ *     carry the matching ID so Azure pins the thread to the right file diff.
  *   - We always include rule_id in the body footer for auditability and
  *     so users can reply `@abid mute angular/subscription-leak` to suppress.
  */
@@ -24,6 +26,8 @@ export interface PostOptions {
   alreadyPosted?: Set<string>;
   /** Iteration ID returned by ADO; ensures thread context binds to current source SHA. */
   iterationId: number;
+  /** Map of repo-relative path -> ADO changeTrackingId for the current PR iteration. */
+  changeTrackingIds?: ReadonlyMap<string, number>;
 }
 
 export async function postFinding(
@@ -40,24 +44,35 @@ export async function postFinding(
   const checks = isPostable(finding.location, diff, { requireAddedLine: false });
   if (!checks.postable) return { posted: false, reason: checks.reason };
 
+  const changeTrackingId = opts.changeTrackingIds
+    ? lookupChangeTrackingId(opts.changeTrackingIds, finding.location.file)
+    : undefined;
+  if (opts.changeTrackingIds && changeTrackingId === undefined) {
+    return { posted: false, reason: 'change-tracking-id-missing' };
+  }
+
   const body = formatComment(finding, opts.includeSuggestionBlock !== false);
   const start = finding.location.startLine;
-  const end = finding.location.endLine ?? start;
+  const end = Math.max(start, finding.location.endLine ?? start);
+  const prContext: NonNullable<AdoThreadRequest['pullRequestThreadContext']> = {
+    iterationContext: {
+      firstComparingIteration: opts.iterationId,
+      secondComparingIteration: opts.iterationId,
+    },
+  };
+  if (changeTrackingId !== undefined) {
+    prContext.changeTrackingId = changeTrackingId;
+  }
 
   const thread: AdoThreadRequest = {
     status: opts.closeThreadOnLowSeverity && finding.severity === 'info' ? 'closed' : 'active',
-    comments: [{ commentType: 'text', content: body }],
+    comments: [{ parentCommentId: 0, commentType: 'text', content: body }],
     threadContext: {
-      filePath: `/${finding.location.file}`,
-      rightFileStart: { line: start, offset: 1 },
-      rightFileEnd: { line: end, offset: 1 },
+      filePath: toAdoFilePath(finding.location.file),
+      rightFileStart: { line: start, offset: toAdoOffset(finding.location.startColumn) },
+      rightFileEnd: { line: end, offset: toAdoOffset(finding.location.endColumn) },
     },
-    pullRequestThreadContext: {
-      iterationContext: {
-        firstComparingIteration: opts.iterationId,
-        secondComparingIteration: opts.iterationId,
-      },
-    },
+    pullRequestThreadContext: prContext,
   };
 
   const t = await ado.postThread(pr, thread);
@@ -71,7 +86,7 @@ export function formatComment(finding: Finding, includeSuggestion: boolean): str
   // the first comment, and the body opens with the same point. Echoing makes
   // comments feel wordy.
 
-  lines.push(finding.message.body.trim());
+  lines.push(finding.message.body.trim() || finding.message.title.trim());
 
   if (includeSuggestion && finding.message.suggestion) {
     lines.push('');
@@ -93,4 +108,21 @@ export function formatComment(finding: Finding, includeSuggestion: boolean): str
   lines.push(`<sub>rule: \`${finding.ruleId}\` · confidence ${finding.confidence.toFixed(2)}</sub>`);
 
   return lines.join('\n');
+}
+
+function lookupChangeTrackingId(ids: ReadonlyMap<string, number>, file: string): number | undefined {
+  const path = normalizeRepoPath(file);
+  return ids.get(path) ?? ids.get(`/${path}`);
+}
+
+function toAdoFilePath(file: string): string {
+  return `/${normalizeRepoPath(file)}`;
+}
+
+function normalizeRepoPath(file: string): string {
+  return file.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function toAdoOffset(column: number | undefined): number {
+  return Math.max(1, (column ?? 0) + 1);
 }

@@ -54,6 +54,44 @@ export class AdoClient {
     return Math.max(...ids);
   }
 
+  async getIterationChanges(pr: PullRequestRef, iterationId: number): Promise<AdoIterationChange[]> {
+    const out: AdoIterationChange[] = [];
+    let skip = 0;
+    const top = 2000;
+
+    while (true) {
+      const path =
+        `/${encodeURIComponent(pr.project)}/_apis/git/repositories/${pr.repositoryId}` +
+        `/pullRequests/${pr.pullRequestId}/iterations/${iterationId}/changes`;
+      const res = await this.opts.fetch(this.url(path, { '$top': String(top), '$skip': String(skip) }), {
+        method: 'GET',
+        headers: { 'authorization': this.authHeader(), 'accept': 'application/json' },
+      });
+      if (!res.ok) throw new Error(`ADO getIterationChanges ${res.status}: ${await res.text()}`);
+
+      const json = (await res.json()) as AdoIterationChangesResponse;
+      out.push(...(json.changeEntries ?? []));
+      if (!json.nextSkip || json.nextSkip <= skip) break;
+      skip = json.nextSkip;
+    }
+
+    return out;
+  }
+
+  async getChangeTrackingMap(pr: PullRequestRef, iterationId: number): Promise<Map<string, number>> {
+    const changes = await this.getIterationChanges(pr, iterationId);
+    const out = new Map<string, number>();
+    for (const c of changes) {
+      if (!Number.isFinite(c.changeTrackingId)) continue;
+      const current = normalizeAdoPath(c.item?.path ?? c.sourceServerItem);
+      if (current) out.set(current, c.changeTrackingId);
+
+      const original = normalizeAdoPath(c.originalPath);
+      if (original) out.set(original, c.changeTrackingId);
+    }
+    return out;
+  }
+
   async getPullRequestDiff(pr: PullRequestRef): Promise<string> {
     // ADO doesn't return a unified diff directly; we use the `git/diffs/commits`
     // endpoint with `$mediaType=text/x-diff` to receive a unified diff text.
@@ -157,8 +195,8 @@ export class AdoClient {
 }
 
 export interface AdoThreadRequest {
-  status?: 'active' | 'closed' | 'wontFix' | 'fixed';
-  comments: Array<{ commentType: 'text' | 'system'; content: string }>;
+  status?: 'active' | 'closed' | 'wontFix' | 'fixed' | 'byDesign' | 'pending' | 'unknown';
+  comments: Array<{ parentCommentId?: number; commentType: 'text' | 'system' | 'codeChange'; content: string }>;
   threadContext?: {
     filePath: string;
     rightFileStart?: { line: number; offset: number };
@@ -167,8 +205,8 @@ export interface AdoThreadRequest {
     leftFileEnd?: { line: number; offset: number };
   };
   pullRequestThreadContext?: {
-    iterationContext?: { firstComparingIteration: number; secondComparingIteration: number };
     changeTrackingId?: number;
+    iterationContext?: { firstComparingIteration: number; secondComparingIteration: number };
   };
 }
 
@@ -186,4 +224,23 @@ export interface AdoStatus {
 
 interface AdoChange {
   item?: { path: string };
+}
+
+export interface AdoIterationChange {
+  changeTrackingId: number;
+  changeId?: number;
+  changeType?: string;
+  item?: { path?: string; objectId?: string; originalObjectId?: string };
+  originalPath?: string;
+  sourceServerItem?: string;
+}
+
+interface AdoIterationChangesResponse {
+  changeEntries?: AdoIterationChange[];
+  nextSkip?: number;
+}
+
+function normalizeAdoPath(path: string | undefined): string | null {
+  if (!path) return null;
+  return path.replace(/\\/g, '/').replace(/^\/+/, '');
 }
