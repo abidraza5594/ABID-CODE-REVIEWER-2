@@ -102,31 +102,34 @@ export function parseTemplateRef(ref: TemplateRef): TemplateAnalysis {
 
   class Visitor extends TmplAstRecursiveVisitor {
     override visitBoundAttribute(b: TmplAstBoundAttribute): void {
+      const expression = expressionText(b.value);
       bindings.push({
-        expression: b.value.toString(),
+        expression,
         line: lineOf(b.sourceSpan.start.offset),
         kind: 'attribute',
       });
-      collectMethodCalls(b.value.toString(), lineOf(b.sourceSpan.start.offset), true, methodCalls);
+      collectMethodCalls(expression, lineOf(b.sourceSpan.start.offset), true, methodCalls);
       super.visitBoundAttribute(b);
     }
     override visitBoundEvent(b: TmplAstBoundEvent): void {
+      const expression = expressionText(b.handler);
       bindings.push({
-        expression: b.handler.toString(),
+        expression,
         line: lineOf(b.sourceSpan.start.offset),
         kind: 'event',
       });
       // Event handlers run on user input, not every CD cycle — not hot path.
-      collectMethodCalls(b.handler.toString(), lineOf(b.sourceSpan.start.offset), false, methodCalls);
+      collectMethodCalls(expression, lineOf(b.sourceSpan.start.offset), false, methodCalls);
       super.visitBoundEvent(b);
     }
     override visitBoundText(b: TmplAstBoundText): void {
+      const expression = expressionText(b.value);
       bindings.push({
-        expression: b.value.toString(),
+        expression,
         line: lineOf(b.sourceSpan.start.offset),
         kind: 'interpolation',
       });
-      collectMethodCalls(b.value.toString(), lineOf(b.sourceSpan.start.offset), true, methodCalls);
+      collectMethodCalls(expression, lineOf(b.sourceSpan.start.offset), true, methodCalls);
       super.visitBoundText(b);
     }
     override visitIfBlock(blk: TmplAstIfBlock): void {
@@ -201,6 +204,17 @@ export function parseTemplateRef(ref: TemplateRef): TemplateAnalysis {
     forLoops,
     diagnostics,
   };
+}
+
+function expressionText(value: unknown): string {
+  const maybe = value as { source?: string; ast?: { source?: string }; toString?: () => string };
+  const source = maybe.source ?? maybe.ast?.source;
+  if (source) return source.trim();
+
+  let text = maybe.toString ? maybe.toString() : String(value);
+  const interpolation = /\{\{\s*([\s\S]*?)\s*\}\}/.exec(text);
+  if (interpolation) text = interpolation[1]!;
+  return text.replace(/\s+in\s+.+@\d+:\d+$/s, '').trim();
 }
 
 function offsetToLine(source: string, offset: number): number {
