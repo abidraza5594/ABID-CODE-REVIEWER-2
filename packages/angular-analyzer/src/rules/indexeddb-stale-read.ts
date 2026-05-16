@@ -39,9 +39,8 @@ export const indexedDbStaleReadRule = {
       for (const method of cls.getMethods()) {
         const body = method.getBody();
         if (!body) continue;
-        const statements = body.getKind() === SyntaxKind.Block
-          ? body.asKindOrThrow(SyntaxKind.Block).getStatements()
-          : [];
+        const block = body.asKind(SyntaxKind.Block);
+        const statements = block ? block.getStatements() : [];
 
         let pendingWriteOnLine: number | null = null;
         let pendingTargetText: string | null = null;

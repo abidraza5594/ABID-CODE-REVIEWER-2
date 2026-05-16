@@ -20,7 +20,8 @@
     "@abid/core": "workspace:*",
     "@abid/ast-engine": "workspace:*",
     "@abid/repo-context-engine": "workspace:*",
-    "@abid/git-diff-engine": "workspace:*"
+    "@abid/git-diff-engine": "workspace:*",
+    "ts-morph": "^22.0.0"
   },
   "devDependencies": {
     "typescript": "^5.4.5",

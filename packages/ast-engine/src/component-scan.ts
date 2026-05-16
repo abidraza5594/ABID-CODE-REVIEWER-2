@@ -1,10 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+  type CallExpression,
   ClassDeclaration,
   Decorator,
   Node,
   ObjectLiteralExpression,
+  type PropertyAccessExpression,
   type PropertyAssignment,
   SourceFile,
   SyntaxKind,
@@ -330,10 +332,10 @@ function inspectPipe(receiver: Node): {
 
   while (current) {
     if (current.getKind() !== SyntaxKind.CallExpression) break;
-    const call = current.asKindOrThrow(SyntaxKind.CallExpression);
-    const callee = call.getExpression();
+    const call: CallExpression = current.asKindOrThrow(SyntaxKind.CallExpression);
+    const callee: Node = call.getExpression();
     if (callee.getKind() !== SyntaxKind.PropertyAccessExpression) break;
-    const pa = callee.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
+    const pa: PropertyAccessExpression = callee.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
     if (pa.getName() !== 'pipe') break;
 
     for (const op of call.getArguments()) {

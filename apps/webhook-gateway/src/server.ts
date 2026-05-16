@@ -49,12 +49,13 @@ async function main() {
   });
 
   app.get('/healthz', async () => ({ ok: true }));
-  app.get('/readyz', async () => {
+  app.get('/readyz', async (_req, reply) => {
     try {
       await redis.ping();
       return { ok: true };
     } catch (err) {
-      throw app.httpErrors.serviceUnavailable((err as Error).message);
+      reply.code(503);
+      return { ok: false, error: (err as Error).message };
     }
   });
 

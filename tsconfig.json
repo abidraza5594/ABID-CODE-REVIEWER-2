@@ -13,6 +13,7 @@
     { "path": "packages/runtime-instrumentation" },
     { "path": "packages/memory-analyzer" },
     { "path": "packages/findings" },
+    { "path": "apps/cli" },
     { "path": "apps/webhook-gateway" },
     { "path": "apps/orchestrator" },
     { "path": "apps/runtime-runner" },

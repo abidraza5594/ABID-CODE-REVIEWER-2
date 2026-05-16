@@ -150,8 +150,7 @@ function parseHunk(lines: string[], start: number): { hunk: Hunk; advance: numbe
     i++;
   }
 
-  return {
-    hunk: { oldStart, oldLines, newStart, newLines, section, lines: out },
-    advance: i - start,
-  };
+  const hunk: Hunk = { oldStart, oldLines, newStart, newLines, lines: out };
+  if (section !== undefined) hunk.section = section;
+  return { hunk, advance: i - start };
 }

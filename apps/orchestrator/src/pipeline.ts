@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import type { Logger } from 'pino';
 import type { Finding, ReviewJob } from '@abid/core';
 import { DiffIndex, parseUnifiedDiff } from '@abid/git-diff-engine';

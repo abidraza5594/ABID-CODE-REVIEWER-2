@@ -10,10 +10,12 @@
   },
   "packageManager": "pnpm@9.12.0",
   "scripts": {
-    "build": "pnpm -r --filter './packages/*' --filter './apps/*' run build",
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
     "test": "pnpm -r run test",
-    "lint": "pnpm -r run lint",
-    "typecheck": "pnpm -r run typecheck",
+    "typecheck": "tsc -b --noEmit",
+    "start": "pnpm --filter @abid/cli dev",
+    "dev:cli": "pnpm --filter @abid/cli dev",
     "dev:gateway": "pnpm --filter @abid/webhook-gateway dev",
     "dev:orchestrator": "pnpm --filter @abid/orchestrator dev",
     "dev:runner": "pnpm --filter @abid/runtime-runner dev"
