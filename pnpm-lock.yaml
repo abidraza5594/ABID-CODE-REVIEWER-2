@@ -220,6 +220,9 @@ importers:
       '@abid/repo-context-engine':
         specifier: workspace:*
         version: link:../repo-context-engine
+      ts-morph:
+        specifier: ^22.0.0
+        version: 22.0.0
     devDependencies:
       typescript:
         specifier: ^5.4.5
