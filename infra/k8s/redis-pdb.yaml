@@ -1,0 +1,40 @@
+# Note: in production Redis is Azure Cache for Redis Enterprise (a managed
+# service), not a pod. This file exists so local kind/minikube setups can
+# stand up a single Redis for development. Do not deploy it to production.
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-dev
+  namespace: abid-review
+spec:
+  serviceName: redis-dev
+  replicas: 1
+  selector: { matchLabels: { app: redis-dev } }
+  template:
+    metadata: { labels: { app: redis-dev } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--appendonly", "yes"]
+          ports: [{ containerPort: 6379, name: redis }]
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "1",    memory: "1Gi"  }
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ ReadWriteOnce ]
+        resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-dev
+  namespace: abid-review
+spec:
+  clusterIP: None
+  selector: { app: redis-dev }
+  ports: [{ port: 6379, targetPort: redis, name: redis }]

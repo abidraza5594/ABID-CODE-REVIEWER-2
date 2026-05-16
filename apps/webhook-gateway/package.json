@@ -1,0 +1,25 @@
+{
+  "name": "@abid/webhook-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@abid/core": "workspace:*",
+    "@abid/azure-devops": "workspace:*",
+    "fastify": "^4.27.0",
+    "ioredis": "^5.4.1",
+    "pino": "^9.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsx": "^4.7.0",
+    "@types/node": "^20.11.0"
+  }
+}

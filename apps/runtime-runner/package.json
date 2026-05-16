@@ -1,0 +1,26 @@
+{
+  "name": "@abid/runtime-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "playwright install --with-deps chromium"
+  },
+  "dependencies": {
+    "@abid/core": "workspace:*",
+    "@abid/runtime-instrumentation": "workspace:*",
+    "ioredis": "^5.4.1",
+    "pino": "^9.1.0",
+    "playwright": "^1.44.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsx": "^4.7.0",
+    "@types/node": "^20.11.0"
+  }
+}

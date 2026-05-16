@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime-runner
+  namespace: abid-review
+  labels: { app: runtime-runner }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: runtime-runner } }
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  template:
+    metadata:
+      labels: { app: runtime-runner }
+    spec:
+      serviceAccountName: runtime-runner
+      securityContext:
+        # Chromium needs a few extra capabilities for sandboxing; we use the
+        # Playwright base image's pwuser and disable user-namespace sandbox via
+        # --no-sandbox in the runner.
+        fsGroup: 1001
+      containers:
+        - name: app
+          image: abidregistry.azurecr.io/abid/runtime-runner:latest
+          env:
+            - { name: LOG_LEVEL, value: info }
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: redis-url, key: url } }
+          resources:
+            requests: { cpu: "1", memory: "1.5Gi" }
+            limits:   { cpu: "4", memory: "4Gi" }
+          volumeMounts:
+            - { name: heap, mountPath: /tmp/abid-heap }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ "ALL" ] }
+      volumes:
+        - name: heap
+          emptyDir: { medium: Memory, sizeLimit: 2Gi }
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: runtime-runner
+  namespace: abid-review
+spec:
+  scaleTargetRef: { name: runtime-runner }
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  triggers:
+    - type: redis-streams
+      metadata:
+        addressFromEnv: REDIS_URL
+        stream: jobs:runtime
+        consumerGroup: runtime-runners
+        pendingEntriesCount: "4"

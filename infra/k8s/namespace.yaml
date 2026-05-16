@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: abid-review
+  labels:
+    name: abid-review
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webhook-gateway
+  namespace: abid-review
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orchestrator
+  namespace: abid-review
+  annotations:
+    # Workload identity binding — orchestrator assumes a Mistral-scoped, ADO-scoped role.
+    azure.workload.identity/client-id: <FILL>
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runtime-runner
+  namespace: abid-review

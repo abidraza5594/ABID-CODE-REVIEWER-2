@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/git-diff-engine" },
+    { "path": "../../packages/ast-engine" },
+    { "path": "../../packages/repo-context-engine" },
+    { "path": "../../packages/angular-analyzer" },
+    { "path": "../../packages/confidence-engine" },
+    { "path": "../../packages/deduplication-engine" },
+    { "path": "../../packages/llm-mistral" },
+    { "path": "../../packages/azure-devops" },
+    { "path": "../../packages/findings" }
+  ]
+}

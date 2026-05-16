@@ -1,0 +1,33 @@
+{
+  "name": "@abid/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@abid/core": "workspace:*",
+    "@abid/git-diff-engine": "workspace:*",
+    "@abid/ast-engine": "workspace:*",
+    "@abid/repo-context-engine": "workspace:*",
+    "@abid/angular-analyzer": "workspace:*",
+    "@abid/confidence-engine": "workspace:*",
+    "@abid/deduplication-engine": "workspace:*",
+    "@abid/llm-mistral": "workspace:*",
+    "@abid/azure-devops": "workspace:*",
+    "@abid/findings": "workspace:*",
+    "ioredis": "^5.4.1",
+    "pino": "^9.1.0",
+    "simple-git": "^3.24.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsx": "^4.7.0",
+    "@types/node": "^20.11.0"
+  }
+}

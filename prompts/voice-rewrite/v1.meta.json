@@ -1,0 +1,5 @@
+{
+  "model": "mistral-large-latest",
+  "temperature": 0.15,
+  "maxTokens": 512
+}

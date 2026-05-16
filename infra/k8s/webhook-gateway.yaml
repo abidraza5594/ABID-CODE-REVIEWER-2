@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-gateway
+  namespace: abid-review
+  labels: { app: webhook-gateway }
+spec:
+  replicas: 2
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: webhook-gateway } }
+  template:
+    metadata:
+      labels: { app: webhook-gateway }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: webhook-gateway
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: app
+          image: abidregistry.azurecr.io/abid/webhook-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8080, name: http }]
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: LOG_LEVEL, value: info }
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: redis-url, key: url } }
+            - { name: ABID_TENANTS_JSON, value: /etc/abid/tenants.json }
+          volumeMounts:
+            - { name: tenants, mountPath: /etc/abid, readOnly: true }
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "1000m", memory: "512Mi" }
+          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 5 }
+          livenessProbe:  { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ "ALL" ] }
+      volumes:
+        - name: tenants
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes: { secretProviderClass: abid-tenants-spc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-gateway
+  namespace: abid-review
+spec:
+  selector: { app: webhook-gateway }
+  ports: [{ port: 80, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webhook-gateway
+  namespace: abid-review
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: webhook-gateway }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: webhook-gateway
+  namespace: abid-review
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: webhook-gateway } }

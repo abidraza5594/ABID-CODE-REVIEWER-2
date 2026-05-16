@@ -1,0 +1,21 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/git-diff-engine" },
+    { "path": "packages/ast-engine" },
+    { "path": "packages/repo-context-engine" },
+    { "path": "packages/angular-analyzer" },
+    { "path": "packages/confidence-engine" },
+    { "path": "packages/deduplication-engine" },
+    { "path": "packages/llm-mistral" },
+    { "path": "packages/azure-devops" },
+    { "path": "packages/runtime-instrumentation" },
+    { "path": "packages/memory-analyzer" },
+    { "path": "packages/findings" },
+    { "path": "apps/webhook-gateway" },
+    { "path": "apps/orchestrator" },
+    { "path": "apps/runtime-runner" },
+    { "path": "apps/api" }
+  ]
+}

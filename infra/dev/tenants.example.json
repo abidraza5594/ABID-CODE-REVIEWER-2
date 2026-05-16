@@ -1,0 +1,8 @@
+[
+  {
+    "tenantId": "abid-dev",
+    "organization": "your-ado-org",
+    "basicAuth": { "user": "ado", "pass": "change-me-locally" },
+    "patSecretName": "kv://abid-dev-ado-pat"
+  }
+]

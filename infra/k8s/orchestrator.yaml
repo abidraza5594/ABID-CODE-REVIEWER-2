@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: abid-review
+  labels: { app: orchestrator }
+spec:
+  replicas: 4
+  selector: { matchLabels: { app: orchestrator } }
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 1 } }
+  template:
+    metadata:
+      labels: { app: orchestrator }
+    spec:
+      serviceAccountName: orchestrator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: app
+          image: abidregistry.azurecr.io/abid/orchestrator:latest
+          env:
+            - { name: LOG_LEVEL, value: info }
+            - { name: CONCURRENCY, value: "2" }
+            - { name: CONSUMER_GROUP, value: orchestrators }
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: redis-url, key: url } }
+            - name: ABID_ADO_PAT
+              valueFrom: { secretKeyRef: { name: ado-pat, key: pat } }
+            - name: MISTRAL_API_KEY
+              valueFrom: { secretKeyRef: { name: mistral, key: api-key } }
+            - { name: MISTRAL_MODEL, value: mistral-large-latest }
+            - { name: ABID_PROMPTS_DIR, value: /app/prompts }
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2", memory: "4Gi" }
+          volumeMounts:
+            - { name: workdir, mountPath: /tmp }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ "ALL" ] }
+      volumes:
+        # tmpfs-backed workdir keeps cloned repos off the node disk and out of
+        # any forensic snapshot. Sized 4Gi which is well above the largest
+        # tenant repo (verified weekly).
+        - name: workdir
+          emptyDir: { medium: Memory, sizeLimit: 4Gi }
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: orchestrator
+  namespace: abid-review
+spec:
+  scaleTargetRef: { name: orchestrator }
+  minReplicaCount: 4
+  maxReplicaCount: 40
+  triggers:
+    - type: redis-streams
+      metadata:
+        addressFromEnv: REDIS_URL
+        stream: jobs:review
+        consumerGroup: orchestrators
+        pendingEntriesCount: "8"
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-egress
+  namespace: abid-review
+spec:
+  podSelector: { matchLabels: { app: orchestrator } }
+  policyTypes: [ Egress ]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { name: kube-system } }
+      ports: [{ protocol: UDP, port: 53 }]
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports:
+        - { protocol: TCP, port: 443 } # ADO + Mistral
+        - { protocol: TCP, port: 6379 } # Redis
