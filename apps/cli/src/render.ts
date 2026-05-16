@@ -2,10 +2,15 @@ import kleur from 'kleur';
 import type { Finding } from '@abid/core';
 
 /**
- * Pretty-print findings to the terminal. We render in the same shape a PR
- * comment would have: title, body, optional suggestion block, siblings,
- * footer with rule id + confidence. Helps the user see exactly what would
- * be posted to ADO.
+ * Honest renderer. Groups findings by their FINAL stage so the user sees
+ * exactly what will and won't be posted. No more "4 to post" headers when
+ * nothing crosses the threshold.
+ *
+ * Stage → bucket:
+ *   'rewritten' | 'posted'        → POST   (will be sent to ADO on confirm)
+ *   'summarized'                  → SUMMARY-ONLY (in PR summary, not inline)
+ *   'dropped'                     → DROPPED (with reason, for transparency)
+ *   'clustered' (residual)        → ANOMALY (pipeline bug indicator)
  */
 export function renderFindings(findings: Finding[]): string {
   if (findings.length === 0) {
@@ -13,34 +18,46 @@ export function renderFindings(findings: Finding[]): string {
   }
 
   const lines: string[] = [];
-  const posted = findings.filter((f) => f.stage === 'posted' || f.stage === 'rewritten' || f.stage === 'clustered');
+  const toPost = findings.filter((f) => f.stage === 'rewritten' || f.stage === 'posted');
   const summarized = findings.filter((f) => f.stage === 'summarized');
   const dropped = findings.filter((f) => f.stage === 'dropped');
+  const leftover = findings.filter((f) => f.stage === 'clustered');
 
-  lines.push('');
-  lines.push(kleur.bold().cyan(`━━━ ${posted.length} comment(s) to post ━━━`));
-  posted.forEach((f, i) => lines.push(renderOne(f, i + 1)));
+  if (toPost.length > 0) {
+    lines.push('');
+    lines.push(kleur.bold().green(`━━━ ${toPost.length} comment(s) ready to post ━━━`));
+    toPost.forEach((f, i) => lines.push(renderPost(f, i + 1)));
+  } else {
+    lines.push('');
+    lines.push(kleur.bold().yellow('━━━ 0 comments crossed the post threshold ━━━'));
+    lines.push(kleur.dim('   Nothing will be posted to ADO. See sections below for why.'));
+  }
 
   if (summarized.length > 0) {
     lines.push('');
     lines.push(kleur.bold().yellow(`━━━ ${summarized.length} lower-confidence note(s) (PR summary only) ━━━`));
-    summarized.forEach((f) => {
-      lines.push(`  ${kleur.yellow('·')} ${f.message.title} ${kleur.dim(`(${f.location.file}:${f.location.startLine}, conf ${f.confidence.toFixed(2)})`)}`);
-    });
+    summarized.forEach((f) => lines.push(renderShort(f, kleur.yellow)));
   }
 
   if (dropped.length > 0) {
     lines.push('');
-    lines.push(kleur.dim(`${dropped.length} finding(s) dropped (${groupDropReasons(dropped)})`));
+    lines.push(kleur.bold().red(`━━━ ${dropped.length} finding(s) dropped ━━━`));
+    dropped.forEach((f) => lines.push(renderShort(f, kleur.red)));
+  }
+
+  if (leftover.length > 0) {
+    lines.push('');
+    lines.push(kleur.bold().magenta(`! ${leftover.length} finding(s) in unexpected 'clustered' stage (bug)`));
+    leftover.forEach((f) => lines.push(renderShort(f, kleur.magenta)));
   }
 
   return lines.join('\n');
 }
 
-function renderOne(f: Finding, n: number): string {
+function renderPost(f: Finding, n: number): string {
   const parts: string[] = [];
   parts.push('');
-  parts.push(kleur.bold(`#${n}  ${f.message.title}`));
+  parts.push(kleur.bold().green(`✓ #${n}  ${f.message.title}`));
   parts.push(
     kleur.dim('     ') +
     kleur.dim(`${f.location.file}:${f.location.startLine}`) +
@@ -50,7 +67,7 @@ function renderOne(f: Finding, n: number): string {
     kleur.dim(`confidence ${f.confidence.toFixed(2)}`),
   );
   parts.push('');
-  for (const line of (f.message.body || '(no body — voice rewrite failed)').split('\n')) {
+  for (const line of (f.message.body || '(no body)').split('\n')) {
     parts.push('     ' + line);
   }
   if (f.message.suggestion) {
@@ -66,14 +83,23 @@ function renderOne(f: Finding, n: number): string {
     parts.push(kleur.dim('     Same issue also at:'));
     for (const s of f.siblings) parts.push(kleur.dim(`       · ${s.file}:${s.line}`));
   }
+  if (f.notes) {
+    parts.push('');
+    parts.push(kleur.dim('     ') + kleur.dim(f.notes));
+  }
   return parts.join('\n');
 }
 
-function groupDropReasons(dropped: Finding[]): string {
-  const counts = new Map<string, number>();
-  for (const f of dropped) {
-    const r = f.dispositionReason ?? 'unknown';
-    counts.set(r, (counts.get(r) ?? 0) + 1);
+function renderShort(f: Finding, color: (s: string) => string): string {
+  const lines: string[] = [];
+  lines.push(
+    '  ' + color('·') + ' ' + f.message.title +
+    kleur.dim(`  (${f.location.file}:${f.location.startLine}, conf ${f.confidence.toFixed(2)})`),
+  );
+  if (f.notes) {
+    lines.push(kleur.dim('      ↳ ') + kleur.dim(f.notes));
+  } else if (f.dispositionReason) {
+    lines.push(kleur.dim('      ↳ ') + kleur.dim(`reason: ${f.dispositionReason}`));
   }
-  return [...counts].map(([r, n]) => `${n}× ${r}`).join(', ');
+  return lines.join('\n');
 }

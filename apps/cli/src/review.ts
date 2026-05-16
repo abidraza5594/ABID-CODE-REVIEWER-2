@@ -20,6 +20,7 @@ import {
 } from '@abid/llm-mistral';
 import type { ParsedPr } from './parse-url.js';
 import { renderFindings } from './render.js';
+import { findRepoRoot } from './paths.js';
 
 export interface ReviewOutput {
   findings: Finding[];
@@ -109,7 +110,12 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
       model: process.env['MISTRAL_MODEL'] ?? 'mistral-large-latest',
       customerId: 'cli',
     });
-    const prompts = new PromptLoader(path.resolve(process.env['ABID_PROMPTS_DIR'] ?? './prompts'));
+    const promptsDir = process.env['ABID_PROMPTS_DIR']
+      ? path.isAbsolute(process.env['ABID_PROMPTS_DIR'])
+        ? process.env['ABID_PROMPTS_DIR']
+        : path.resolve(findRepoRoot(), process.env['ABID_PROMPTS_DIR'])
+      : path.join(findRepoRoot(), 'prompts');
+    const prompts = new PromptLoader(promptsDir);
 
     step(`Asking Mistral to filter false positives (${findings.length} call(s))`);
     findings = await Promise.all(
@@ -118,12 +124,14 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
         const snippet = await readSnippet(workdir, f.location.file, f.location.startLine, 12);
         try {
           const filter = await filterFinding(f, { file: f.location.file, snippet }, { mistral, prompts });
-          return applyScore(f, {
+          const scored = applyScore(f, {
             rulePrecision: 0.85,
             evidence: f.evidence,
             guarantees: f.guarantees,
             llmAgreement: filter.agreement,
           });
+          scored.notes = `LLM filter: agreement=${filter.agreement.toFixed(2)} — ${filter.reason}`;
+          return scored;
         } catch (err) {
           // If Mistral fails for one finding, keep the unfiltered score; don't drop.
           detail(kleur.yellow(`! filter failed for ${f.ruleId}: ${(err as Error).message.slice(0, 80)}`));
@@ -136,9 +144,22 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
     const dedup = await dedupFindings(findings, new FakeEmbedClient(), context.imports);
     findings = dedup.outFindings;
 
-    const toRewrite = findings.filter(
-      (f) => f.stage === 'clustered' && classify(f.ruleId, f.confidence) === 'post',
-    );
+    // After dedup, every anchor is at stage='clustered'. Translate to its final
+    // disposition based on confidence so the renderer can show an honest preview.
+    for (const f of findings) {
+      if (f.stage !== 'clustered') continue;
+      const d = classify(f.ruleId, f.confidence);
+      if (d === 'drop') {
+        f.stage = 'dropped';
+        f.dispositionReason = 'below-confidence-floor';
+      } else if (d === 'summarize') {
+        f.stage = 'summarized';
+        f.dispositionReason = 'below-confidence-floor';
+      }
+      // 'post' stays as 'clustered' until voice-rewrite promotes it to 'rewritten'.
+    }
+
+    const toRewrite = findings.filter((f) => f.stage === 'clustered');
     step(`Voice rewrite (${toRewrite.length} comment(s))`);
     for (const f of toRewrite) {
       try {
@@ -221,7 +242,7 @@ interface PrDetails {
   baseSha: string;
 }
 
-async function fetchPrDetails(ado: AdoClient, pr: ParsedPr): Promise<PrDetails> {
+async function fetchPrDetails(_ado: AdoClient, pr: ParsedPr): Promise<PrDetails> {
   // We hit the GET pullRequests/{id} endpoint directly — the AdoClient
   // package doesn't expose a typed method for this yet.
   const url =

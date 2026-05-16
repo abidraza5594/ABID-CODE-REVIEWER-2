@@ -1,35 +1,20 @@
 #!/usr/bin/env node
 import * as dotenv from 'dotenv';
-import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import * as path from 'node:path';
 import * as readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import kleur from 'kleur';
 import { parsePrInput, type ParseDefaults } from './parse-url.js';
 import { reviewOnePr } from './review.js';
+import { findRepoRoot } from './paths.js';
 
 // Load .env from the repo root, regardless of which directory we were started in.
 // pnpm filter starts the CLI with cwd = apps/cli, so a bare `dotenv/config` would
-// look in the wrong place. Walk upward from this file until we find an `.env`.
-loadDotenvFromRoot();
-
-function loadDotenvFromRoot(): void {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  let dir = here;
-  for (let i = 0; i < 8; i++) {
-    const candidate = path.join(dir, '.env');
-    if (fs.existsSync(candidate)) {
-      dotenv.config({ path: candidate });
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  // Last resort: try cwd. If still not found the validator below will complain.
-  dotenv.config();
-}
+// look in the wrong place.
+const envPath = path.join(findRepoRoot(), '.env');
+if (fs.existsSync(envPath)) dotenv.config({ path: envPath });
+else dotenv.config();
 
 /**
  * Interactive CLI server.

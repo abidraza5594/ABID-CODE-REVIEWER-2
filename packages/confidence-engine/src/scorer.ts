@@ -30,37 +30,61 @@ export interface ScoreResult {
 }
 
 export interface ScoreWeights {
-  rulePrecision: number;
+  /** Floor: even with zero LLM agreement, this fraction of rule precision survives. */
+  rulePrecisionFloor: number;
+  /** Multiplier on rule precision when LLM fully agrees. */
+  rulePrecisionCeiling: number;
+  /** Default LLM agreement when the filter step wasn't run. 0.5 = neutral. */
+  llmDefault: number;
+  /** Additive boosts. */
   typeCorroboration: number;
-  guaranteePenalty: number;
   runtimeCorroboration: number;
   crossFile: number;
-  llmAgreement: number;
+  /** Multiplicative guarantee penalty (1 - strength). */
+  guaranteePenalty: number;
 }
 
+/**
+ * Default weights — rule precision is the primary signal; LLM modulates;
+ * runtime/cross-file evidence is additive on top.
+ *
+ * Worked example (subscription-leak, basePrecision = 0.85):
+ *   LLM agrees (0.8) →  0.85 * (0.35 + 0.55*0.8) = 0.85 * 0.79 ≈ 0.67  → POST
+ *   LLM neutral (0.5) → 0.85 * (0.35 + 0.55*0.5) = 0.85 * 0.625 ≈ 0.53 → POST (barely)
+ *   LLM 0.2          →  0.85 * (0.35 + 0.55*0.2) = 0.85 * 0.46 ≈ 0.39  → SUMMARIZE
+ *   LLM rejects (0.0)→  0.85 * 0.35 ≈ 0.30                              → DROP
+ *
+ * Add runtime corroboration → +0.15 ; cross-file (5+ files) → +0.10.
+ */
 export const DEFAULT_WEIGHTS: ScoreWeights = {
-  rulePrecision: 0.25,
-  typeCorroboration: 0.15,
-  guaranteePenalty: 0.25, // applied as a SUBTRACTION when guarantees are present
-  runtimeCorroboration: 0.20,
+  rulePrecisionFloor: 0.35,
+  rulePrecisionCeiling: 0.90,
+  llmDefault: 0.5,
+  typeCorroboration: 0.05,
+  runtimeCorroboration: 0.15,
   crossFile: 0.10,
-  llmAgreement: 0.20,
+  guaranteePenalty: 1.0,
 };
 
 export function scoreFinding(inputs: ScoreInputs, weights: ScoreWeights = DEFAULT_WEIGHTS): ScoreResult {
   const breakdown: Record<string, number> = {};
 
-  // Rule precision contributes baseline.
-  const rule = clamp01(inputs.rulePrecision) * weights.rulePrecision;
-  breakdown['rule'] = rule;
+  const rule = clamp01(inputs.rulePrecision);
+  const llm = inputs.llmAgreement ?? weights.llmDefault;
 
-  // Type corroboration: a TypeEvidence that explicitly allows nullish (for null-check rules)
-  // or has typeText present and informative.
+  // The rule's contribution is rule precision scaled by an LLM-modulated factor.
+  // floor + (ceiling - floor) * llm so when llm=0 we get floor, when llm=1 we get ceiling.
+  const llmFactor = weights.rulePrecisionFloor + (weights.rulePrecisionCeiling - weights.rulePrecisionFloor) * llm;
+  const ruleContribution = rule * llmFactor;
+  breakdown['rule'] = rule;
+  breakdown['llm'] = llm;
+  breakdown['rule-llm'] = ruleContribution;
+
+  // Additive evidence bonuses on top.
   const hasTypeCorrob = inputs.evidence.some((e) => e.kind === 'type' && e.allowsNullish);
   const typeC = (hasTypeCorrob ? 1 : 0) * weights.typeCorroboration;
   breakdown['type'] = typeC;
 
-  // Runtime: any RuntimeMetricEvidence or HeapDiffEvidence above its threshold.
   const hasRuntime = inputs.evidence.some((e) => {
     if (e.kind === 'runtime') return e.threshold === undefined || e.value >= (e.threshold ?? 0);
     return e.kind === 'heap' || e.kind === 'network';
@@ -68,26 +92,21 @@ export function scoreFinding(inputs: ScoreInputs, weights: ScoreWeights = DEFAUL
   const runtimeC = (hasRuntime ? 1 : 0) * weights.runtimeCorroboration;
   breakdown['runtime'] = runtimeC;
 
-  // Cross-file: multiple matches increase confidence.
   const cross = inputs.evidence.find((e) => e.kind === 'cross-file');
-  const crossC = cross && cross.kind === 'cross-file' && cross.matches.length >= 2
-    ? Math.min(1, cross.matches.length / 5)
-    : 0;
-  breakdown['cross-file'] = crossC * weights.crossFile;
+  const crossMatches = cross && cross.kind === 'cross-file' ? cross.matches.length : 0;
+  const crossC = crossMatches >= 2 ? Math.min(1, crossMatches / 5) * weights.crossFile : 0;
+  breakdown['cross-file'] = crossC;
 
-  // LLM agreement.
-  const llmC = (inputs.llmAgreement ?? 0) * weights.llmAgreement;
-  breakdown['llm'] = llmC;
-
-  // Guarantee penalty: each present guarantee removes a portion of confidence.
-  // We use a soft penalty that saturates so a single strong guarantee doesn't
-  // *necessarily* drop a confidently corroborated finding below the floor.
+  // Multiplicative guarantee penalty: each guarantee shrinks the score toward zero
+  // proportional to its strength. A 0.85 resolver guarantee with weight 1.0 cuts
+  // the score to ~15% of its raw value.
   const guarPenalty = guaranteeStrength(inputs.guarantees) * weights.guaranteePenalty;
-  breakdown['guarantee-penalty'] = -guarPenalty;
+  const beforeGuar = ruleContribution + typeC + runtimeC + crossC;
+  const afterGuar = beforeGuar * (1 - guarPenalty);
+  breakdown['guarantee-penalty'] = -(beforeGuar - afterGuar);
 
-  const raw = rule + typeC + runtimeC + breakdown['cross-file']! + llmC - guarPenalty;
-  // Squash through a soft cap; once we're above 0.95 we don't reward further.
-  const squashed = raw <= 0.95 ? raw : 0.95 + (1 - Math.exp(-(raw - 0.95) * 4)) * 0.05;
+  // Soft cap above 0.95 so signal pile-ups don't max out unrealistically.
+  const squashed = afterGuar <= 0.95 ? afterGuar : 0.95 + (1 - Math.exp(-(afterGuar - 0.95) * 4)) * 0.05;
   const final = clamp01(squashed);
 
   breakdown['final'] = final;

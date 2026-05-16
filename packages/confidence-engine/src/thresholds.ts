@@ -16,8 +16,8 @@ export interface Thresholds {
 }
 
 export const DEFAULT_THRESHOLDS: Thresholds = {
-  postFloor: 0.75,
-  summarizeFloor: 0.50,
+  postFloor: 0.50,
+  summarizeFloor: 0.30,
 };
 
 export type Disposition = 'post' | 'summarize' | 'drop';

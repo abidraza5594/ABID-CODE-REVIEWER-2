@@ -75,6 +75,10 @@ export interface Finding {
   /** Stable hash for dedup keying. Computed by dedup-engine. */
   fingerprint?: string;
 
+  /** Free-form audit notes — used to record why the LLM filter / voice rewrite
+   *  reached its conclusion. Surfaced in the renderer for transparency. */
+  notes?: string;
+
   /** Created/updated UTC ISO timestamps. */
   createdAt: string;
   updatedAt: string;
