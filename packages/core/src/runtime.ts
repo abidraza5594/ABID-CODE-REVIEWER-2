@@ -7,6 +7,11 @@ export interface RuntimeScenario {
   description: string;
   /** Playwright script in TS that boots the app and performs actions. */
   scriptPath: string;
+  /**
+   * Safe built-in action DSL for shared runners.
+   * If omitted, the runner loads the base URL and waits for the app to settle.
+   */
+  actions?: RuntimeAction[];
   /** Components whose findings benefit from this scenario. */
   exercises: string[];
   /** Hard timeout in ms. */
@@ -14,6 +19,45 @@ export interface RuntimeScenario {
   /** How many iterations to run for heap-growth comparison. */
   iterations: number;
 }
+
+export type RuntimeAction =
+  | {
+      type: 'goto';
+      /** Absolute URL, or path relative to the configured base URL. */
+      url: string;
+      waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
+    }
+  | {
+      type: 'click';
+      selector: string;
+      timeoutMs?: number;
+    }
+  | {
+      type: 'fill';
+      selector: string;
+      text: string;
+      timeoutMs?: number;
+    }
+  | {
+      type: 'press';
+      selector: string;
+      key: string;
+      timeoutMs?: number;
+    }
+  | {
+      type: 'waitForSelector';
+      selector: string;
+      state?: 'attached' | 'detached' | 'visible' | 'hidden';
+      timeoutMs?: number;
+    }
+  | {
+      type: 'waitForLoadState';
+      state?: 'load' | 'domcontentloaded' | 'networkidle';
+    }
+  | {
+      type: 'wait';
+      ms: number;
+    };
 
 /**
  * Result of one scenario run, joined to findings via `runtimeRefs`.

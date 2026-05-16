@@ -43,11 +43,12 @@ export const nullWithoutGuardRule = {
           // Async pipe?
           if (/^\s*\(?\s*[A-Za-z_$][\w$]*\$\s*\|\s*async/.test(b.expression)) continue;
           if (/\|\s*async\b/.test(b.expression)) continue;
+          if (hasLocalNullSafety(b.expression, b.rootSymbol)) continue;
 
           // Upstream *ngIf / @if guards covering this binding's line?
-          const guarded = analysis.guards.some(
-            (g) => g.range.startLine <= b.expression.length && // line range check using template-local lines
-                   g.expression.includes(b.rootSymbol ?? '__unreachable__'),
+          const bindingLine = locateBindingLineInTemplate(analysis, b.expression);
+          const guarded = bindingLine !== null && analysis.guards.some(
+            (g) => coversLine(g.range, bindingLine) && namesRoot(g.expression, b.rootSymbol),
           );
           if (guarded) continue;
 
@@ -105,7 +106,8 @@ export const nullWithoutGuardRule = {
             message: {
               title: 'Value can be null without a check',
               body: '',
-              suggestion: '',
+              suggestion: buildSuggestion(b.expression, b.rootSymbol),
+              suggestionLanguage: 'html',
             },
           });
         }
@@ -122,4 +124,32 @@ function locateBindingLineInTemplate(
 ): number | null {
   const b = analysis.bindings.find((x) => x.expression === expression);
   return b ? b.line : null;
+}
+
+function coversLine(range: { startLine: number; endLine: number }, line: number): boolean {
+  return range.startLine <= line && line <= range.endLine;
+}
+
+function namesRoot(expression: string, rootSymbol?: string): boolean {
+  if (!rootSymbol) return false;
+  return new RegExp(`(^|[^A-Za-z0-9_$])${escapeRegex(rootSymbol)}([^A-Za-z0-9_$]|$)`).test(expression);
+}
+
+function hasLocalNullSafety(expression: string, rootSymbol?: string): boolean {
+  if (!rootSymbol) return true;
+  if (new RegExp(`\\b${escapeRegex(rootSymbol)}\\?\\.`).test(expression)) return true;
+  if (new RegExp(`\\b${escapeRegex(rootSymbol)}!\\.`).test(expression)) return true;
+  if (new RegExp(`\\b${escapeRegex(rootSymbol)}\\s*&&`).test(expression)) return true;
+  return false;
+}
+
+function buildSuggestion(expression: string, rootSymbol?: string): string {
+  if (!rootSymbol) return '';
+  const safe = expression.replace(new RegExp(`\\b${escapeRegex(rootSymbol)}\\.`), `${rootSymbol}?.`);
+  if (safe !== expression) return safe;
+  return `@if (${rootSymbol}) {\n  ${expression}\n}`;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -47,10 +47,7 @@ export const trackByMissingRule = {
             message: {
               title: '*ngFor is missing trackBy',
               body: '',
-              suggestion: `*ngFor="let item of items; trackBy: trackById"
-
-// in component:
-trackById = (_: number, item: { id: string }) => item.id;`,
+              suggestion: buildTrackBySuggestion(fl.iterableExpression),
               suggestionLanguage: 'html',
             },
           });
@@ -61,3 +58,13 @@ trackById = (_: number, item: { id: string }) => item.id;`,
     return out;
   },
 } as const;
+
+function buildTrackBySuggestion(iterableExpression: string): string {
+  const parsed = /let\s+([A-Za-z_$][\w$]*)\s+of\s+(.+?)(?:;|$)/.exec(iterableExpression);
+  const itemName = parsed?.[1] ?? 'item';
+  const itemsExpression = (parsed?.[2]?.trim() ?? iterableExpression.trim()) || 'items';
+  return `*ngFor="let ${itemName} of ${itemsExpression}; trackBy: trackById"
+
+// in component:
+trackById = (_: number, ${itemName}: { id: string | number }) => ${itemName}.id;`;
+}

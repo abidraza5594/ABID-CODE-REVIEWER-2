@@ -8,7 +8,7 @@ import { ulid } from '@abid/core';
 import { DiffIndex, parseUnifiedDiff } from '@abid/git-diff-engine';
 import { AstProject } from '@abid/ast-engine';
 import { buildContext } from '@abid/repo-context-engine';
-import { runAnalyzer } from '@abid/angular-analyzer';
+import { ALL_RULES, runAnalyzer } from '@abid/angular-analyzer';
 import { applyScore, classify } from '@abid/confidence-engine';
 import { dedupFindings, FakeEmbedClient } from '@abid/deduplication-engine';
 import { AdoClient, postFinding } from '@abid/azure-devops';
@@ -109,12 +109,12 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
 
     step('Scoring findings');
     findings = findings.map((f) =>
-      applyScore(f, { rulePrecision: 0.85, evidence: f.evidence, guarantees: f.guarantees }),
+      applyScore(f, { rulePrecision: rulePrecisionOf(f.ruleId), evidence: f.evidence, guarantees: f.guarantees }),
     );
 
     const mistral = new MistralClient({
       apiKey: requiredEnv('MISTRAL_API_KEY'),
-      model: process.env['MISTRAL_MODEL'] ?? 'mistral-large-latest',
+      model: process.env['MISTRAL_MODEL'] ?? 'devstral-medium-latest',
       customerId: 'cli',
     });
     const promptsDir = process.env['ABID_PROMPTS_DIR']
@@ -132,7 +132,7 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
         try {
           const filter = await filterFinding(f, { file: f.location.file, snippet }, { mistral, prompts });
           const scored = applyScore(f, {
-            rulePrecision: 0.85,
+            rulePrecision: rulePrecisionOf(f.ruleId),
             evidence: f.evidence,
             guarantees: f.guarantees,
             llmAgreement: filter.agreement,
@@ -351,4 +351,10 @@ function requiredEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
+}
+
+const RULE_PRECISION_BY_ID: Map<string, number> = new Map(ALL_RULES.map((rule) => [rule.id, rule.basePrecision]));
+
+function rulePrecisionOf(ruleId: string): number {
+  return RULE_PRECISION_BY_ID.get(ruleId) ?? 0.65;
 }

@@ -75,12 +75,20 @@ export async function runScenario(opts: RunScenarioOptions): Promise<RuntimeTrac
     await cdp.takeHeapSnapshot((chunk) => opts.onHeapChunk(endSnap, chunk));
     heapSnapshotIds.push(endSnap);
 
-    // Drain instrumentation buffer.
-    const events = (await page.evaluate(() => (window as unknown as { __abidEvents: Array<{ kind: string; payload: unknown; t: number }> }).__abidEvents)) ?? [];
+    await page.evaluate(() => {
+      const w = window as unknown as { __abidFlushSummary?: () => void };
+      w.__abidFlushSummary?.();
+    }).catch(() => undefined);
 
-    // Build subscription event list.
+    // Drain instrumentation buffer.
+    const events = (await page.evaluate(() => (window as unknown as { __abidEvents: RuntimePageEvent[] }).__abidEvents)) ?? [];
+
+    // Build runtime event slices.
     const subs: SubscriptionEvent[] = [];
     const openMap = new Map<number, { openedAtMs: number; stack: string }>();
+    const renderCounts: Record<string, number> = {};
+    const changeDetection: RuntimeTrace['changeDetection'] = {};
+    const signalUpdates: Record<string, number> = {};
     for (const e of events) {
       if (e.kind === 'subscription.open') {
         const p = e.payload as { id: number; openedAt: number; stack: string };
@@ -89,18 +97,49 @@ export async function runScenario(opts: RunScenarioOptions): Promise<RuntimeTrac
         const p = e.payload as { id: number; closedAt: number };
         const o = openMap.get(p.id);
         if (o) {
-          subs.push({
+          const sub: SubscriptionEvent = {
             id: String(p.id),
             openedAtMs: o.openedAtMs,
             closedAtMs: p.closedAt,
             leaked: false,
-          });
+          };
+          const sourceLocation = extractSourceLocation(o.stack);
+          if (sourceLocation) sub.sourceLocation = sourceLocation;
+          subs.push(sub);
           openMap.delete(p.id);
         }
+      } else if (e.kind === 'cd.tick') {
+        const p = e.payload as { durationMs?: number; duration?: number };
+        const duration = finiteNumber(p.durationMs ?? p.duration) ?? 0;
+        const cur = changeDetection['__app__'] ?? { cycles: 0, totalMs: 0 };
+        cur.cycles += 1;
+        cur.totalMs += duration;
+        changeDetection['__app__'] = cur;
+      } else if (e.kind === 'longtask') {
+        const p = e.payload as { url?: string; startMs?: number; durationMs?: number };
+        const duration = finiteNumber(p.durationMs);
+        const startMs = finiteNumber(p.startMs);
+        if (duration !== undefined && duration >= 50 && startMs !== undefined) {
+          longTasks.push({ url: p.url ?? page.url(), startMs, durationMs: duration });
+        }
+      } else if (e.kind === 'render.mutation') {
+        const p = e.payload as { count?: number };
+        renderCounts['__dom__'] = Math.max(renderCounts['__dom__'] ?? 0, finiteNumber(p.count) ?? 0);
+      } else if (e.kind === 'signal.update') {
+        const p = e.payload as { name?: string; count?: number };
+        const key = p.name || '__unknown__';
+        signalUpdates[key] = (signalUpdates[key] ?? 0) + (finiteNumber(p.count) ?? 1);
       }
     }
     for (const [id, o] of openMap) {
-      subs.push({ id: String(id), openedAtMs: o.openedAtMs, leaked: true });
+      const sub: SubscriptionEvent = {
+        id: String(id),
+        openedAtMs: o.openedAtMs,
+        leaked: true,
+      };
+      const sourceLocation = extractSourceLocation(o.stack);
+      if (sourceLocation) sub.sourceLocation = sourceLocation;
+      subs.push(sub);
     }
 
     unsubNet();
@@ -113,10 +152,10 @@ export async function runScenario(opts: RunScenarioOptions): Promise<RuntimeTrac
       startedAt,
       finishedAt: new Date().toISOString(),
       heapSnapshots: heapSnapshotIds,
-      renderCounts: {},          // populated by Angular profiler bridge — empty if unavailable
-      changeDetection: {},       // populated by Angular profiler bridge
+      renderCounts,
+      changeDetection,
       subscriptions: subs,
-      signalUpdates: {},         // optional bridge
+      signalUpdates,
       longTasks,
       networkRequests: [...networkCounts.entries()].map(([k, v]) => ({
         url: k.slice(v.method.length + 1),
@@ -146,4 +185,26 @@ export async function runScenario(opts: RunScenarioOptions): Promise<RuntimeTrac
       consoleErrors: consoleErrors.concat(String((err as Error).message ?? err)),
     };
   }
+}
+
+interface RuntimePageEvent {
+  kind: string;
+  payload: unknown;
+  t: number;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function extractSourceLocation(stack: string): SubscriptionEvent['sourceLocation'] | undefined {
+  for (const line of stack.split('\n')) {
+    const match = /\(?((?:webpack:\/\/\/|ng:\/\/\/|file:\/\/\/)?[^():]+\.ts):(\d+):(\d+)\)?/.exec(line.trim());
+    if (!match) continue;
+    const file = match[1]!.replace(/^webpack:\/\/\//, '').replace(/^ng:\/\/\//, '').replace(/^file:\/\/\//, '');
+    const lineNo = Number(match[2]);
+    if (!Number.isFinite(lineNo)) continue;
+    return { file: file.replace(/\\/g, '/'), line: lineNo };
+  }
+  return undefined;
 }

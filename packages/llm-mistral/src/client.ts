@@ -85,10 +85,13 @@ export class MistralClient {
     if (req.responseFormat === 'json_object') {
       body['response_format'] = { type: 'json_object' };
     }
+    if (req.cacheKey) {
+      body['prompt_cache_key'] = req.cacheKey;
+    }
     return this.enqueue(() => this.requestWithRetry('/v1/chat/completions', body));
   }
 
-  async embed(texts: string[], model = 'mistral-embed'): Promise<number[][]> {
+  async embed(texts: string[], model = 'codestral-embed'): Promise<number[][]> {
     const body = { model, input: texts };
     const res = await this.enqueue(() => this.requestWithRetry('/v1/embeddings', body));
     const parsed = JSON.parse(res.content) as { data: Array<{ embedding: number[] }> };

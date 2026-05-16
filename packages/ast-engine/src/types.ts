@@ -41,6 +41,8 @@ export interface TemplateRef {
   startOffset: number;
   /** The raw template source, normalized to \n line endings. */
   source: string;
+  /** Full component source for inline templates, used only for line mapping. */
+  sourceFileText?: string;
 }
 
 export interface InjectionRef {

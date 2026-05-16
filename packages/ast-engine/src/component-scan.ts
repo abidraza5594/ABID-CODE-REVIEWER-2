@@ -128,6 +128,7 @@ function extractTemplates(
   metadata: ObjectLiteralExpression,
 ): TemplateRef[] {
   const out: TemplateRef[] = [];
+  const sourceFileText = sf.getFullText().replace(/\r\n/g, '\n');
 
   const inline = metadata.getProperty('template');
   if (inline && inline.getKind() === SyntaxKind.PropertyAssignment) {
@@ -149,6 +150,7 @@ function extractTemplates(
           file: project.relativePath(sf),
           startOffset,
           source: source.replace(/\r\n/g, '\n'),
+          sourceFileText,
         });
       }
     }

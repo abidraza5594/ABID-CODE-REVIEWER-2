@@ -38,6 +38,15 @@ export const INSTRUMENTATION_BUNDLE = String.raw`
     catch(e) {}
   }
 
+  function flushSummary() {
+    var leaked = [];
+    subs.forEach(function(v, k){
+      if (!v.closedAt) leaked.push({ id: k, openedAt: v.openedAt, stack: v.stack.split('\n').slice(0,8).join('\n') });
+    });
+    post('summary.leaked-subscriptions', { count: leaked.length, items: leaked.slice(0, 200) });
+  }
+  window.__abidFlushSummary = flushSummary;
+
   // 1) RxJS subscribe instrumentation. We patch via a deferred resolver because
   // RxJS is usually loaded after our init script runs. Caller passes the
   // global identifier or we sniff window.rxjs / globalThis.rxjs.
@@ -85,13 +94,44 @@ export const INSTRUMENTATION_BUNDLE = String.raw`
   }
   // Cheap fallback: count microtask flushes that contain a measurable layout.
   var lastTick = performance.now();
-  new PerformanceObserver(function(entries){
-    entries.getEntries().forEach(function(e){
-      if (e.entryType === 'measure' && e.name && e.name.indexOf('Zone') === 0) {
-        post('cd.tick', { atMs: performance.now(), durationMs: e.duration });
-      }
+  try {
+    new PerformanceObserver(function(entries){
+      entries.getEntries().forEach(function(e){
+        if (e.entryType === 'measure' && e.name && e.name.indexOf('Zone') === 0) {
+          post('cd.tick', { atMs: performance.now(), durationMs: e.duration });
+        }
+      });
+    }).observe({ entryTypes: ['measure'] });
+  } catch(e) {}
+
+  try {
+    new PerformanceObserver(function(entries){
+      entries.getEntries().forEach(function(e){
+        post('longtask', {
+          url: location.href,
+          startMs: e.startTime,
+          durationMs: e.duration
+        });
+      });
+    }).observe({ entryTypes: ['longtask'] });
+  } catch(e) {}
+
+  try {
+    var mutationBatches = 0;
+    new MutationObserver(function(records){
+      mutationBatches++;
+      post('render.mutation', {
+        count: mutationBatches,
+        records: records.length,
+        atMs: performance.now()
+      });
+    }).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true
     });
-  }).observe({ entryTypes: ['measure'] });
+  } catch(e) {}
 
   // 3) Event-listener imbalance.
   var origAdd = EventTarget.prototype.addEventListener;
@@ -139,12 +179,6 @@ export const INSTRUMENTATION_BUNDLE = String.raw`
   }
 
   // 5) Leaked-subscription summary on pagehide.
-  window.addEventListener('pagehide', function(){
-    var leaked = [];
-    subs.forEach(function(v, k){
-      if (!v.closedAt) leaked.push({ id: k, openedAt: v.openedAt, stack: v.stack.split('\n').slice(0,8).join('\n') });
-    });
-    post('summary.leaked-subscriptions', { count: leaked.length, items: leaked.slice(0, 200) });
-  });
+  window.addEventListener('pagehide', flushSummary);
 })();
 `;

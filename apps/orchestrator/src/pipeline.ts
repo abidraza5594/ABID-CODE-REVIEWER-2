@@ -1,13 +1,14 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { Redis } from 'ioredis';
 import { simpleGit } from 'simple-git';
 import type { Logger } from 'pino';
-import type { Finding, ReviewJob } from '@abid/core';
+import type { Finding, ReviewJob, RuntimeScenario, RuntimeTrace } from '@abid/core';
 import { DiffIndex, parseUnifiedDiff } from '@abid/git-diff-engine';
-import { AstProject, scanComponents } from '@abid/ast-engine';
+import { AstProject, type ComponentDescriptor } from '@abid/ast-engine';
 import { buildContext } from '@abid/repo-context-engine';
-import { runAnalyzer } from '@abid/angular-analyzer';
+import { ALL_RULES, runAnalyzer, type RuntimeBundle } from '@abid/angular-analyzer';
 import { applyScore, classify, DEFAULT_THRESHOLDS } from '@abid/confidence-engine';
 import { dedupFindings, FakeEmbedClient } from '@abid/deduplication-engine';
 import {
@@ -48,16 +49,29 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
       return c.templates.some((t) => diff.fileByNewPath(t.file));
     });
 
+    const runtime = await collectRuntimeEvidence(job, cfg, changedComponents, log);
+
     // 5) Run static analyzer.
+    const analyzerContext = runtime
+      ? {
+          jobId: job.id,
+          tenantId: job.pr.tenantId,
+          project,
+          repo: context,
+          diff,
+          changedComponents,
+          runtime,
+        }
+      : {
+          jobId: job.id,
+          tenantId: job.pr.tenantId,
+          project,
+          repo: context,
+          diff,
+          changedComponents,
+        };
     let findings = runAnalyzer(
-      {
-        jobId: job.id,
-        tenantId: job.pr.tenantId,
-        project,
-        repo: context,
-        diff,
-        changedComponents,
-      },
+      analyzerContext,
       { preFilterFloor: 0.4 },
     );
     log.info({ jobId: job.id, rawFindings: findings.length }, 'analyzer done');
@@ -72,7 +86,7 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
 
     findings = findings.map((f) =>
       applyScore(f, {
-        rulePrecision: 0.85,
+        rulePrecision: rulePrecisionOf(f.ruleId),
         evidence: f.evidence,
         guarantees: f.guarantees,
       }),
@@ -86,7 +100,7 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
         const snippet = await readSnippet(workdir, f.location.file, f.location.startLine, 12);
         const filter = await filterFinding(f, { file: f.location.file, snippet }, { mistral, prompts });
         return applyScore(f, {
-          rulePrecision: 0.85,
+          rulePrecision: rulePrecisionOf(f.ruleId),
           evidence: f.evidence,
           guarantees: f.guarantees,
           llmAgreement: filter.agreement,
@@ -97,7 +111,7 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
     // 8) Dedup.
     const embedder = cfg.useFakeEmbeddings
       ? new FakeEmbedClient()
-      : new MistralEmbedAdapter(mistral);
+      : new MistralEmbedAdapter(mistral, cfg.mistralEmbedModel);
     const dedup = await dedupFindings(findings, embedder, context.imports);
     findings = dedup.outFindings;
 
@@ -176,6 +190,146 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
   }
 }
 
+async function collectRuntimeEvidence(
+  job: ReviewJob,
+  cfg: JobConfig,
+  changedComponents: ComponentDescriptor[],
+  log: Logger,
+): Promise<RuntimeBundle | undefined> {
+  if (!cfg.runtimeRedisUrl || !cfg.runtimeBaseUrl || cfg.runtimeScenarios.length === 0 || changedComponents.length === 0) {
+    return undefined;
+  }
+
+  const scenarios = cfg.runtimeScenarios.filter((s) =>
+    changedComponents.some((c) => scenarioExercisesComponent(s, c)),
+  );
+  if (scenarios.length === 0) return undefined;
+
+  const redis = new Redis(cfg.runtimeRedisUrl);
+  const requests = scenarios.map((scenario) => ({
+    scenario,
+    resultsKey: `abid:runtime:${job.id}:${scenario.id}`,
+  }));
+
+  try {
+    if (requests.length > 0) await redis.del(...requests.map((r) => r.resultsKey));
+    for (const req of requests) {
+      await redis.xadd('jobs:runtime', '*', 'payload', JSON.stringify({
+        jobId: job.id,
+        baseUrl: cfg.runtimeBaseUrl,
+        scenario: req.scenario,
+        resultsKey: req.resultsKey,
+      }));
+    }
+
+    const pending = new Map(requests.map((r) => [r.resultsKey, r.scenario]));
+    const traces: RuntimeTrace[] = [];
+    const deadline = Date.now() + cfg.runtimeTimeoutMs;
+    while (pending.size > 0 && Date.now() < deadline) {
+      const keys = [...pending.keys()];
+      const values = await redis.mget(...keys);
+      values.forEach((raw, index) => {
+        if (!raw) return;
+        const key = keys[index]!;
+        try {
+          traces.push(JSON.parse(raw) as RuntimeTrace);
+          pending.delete(key);
+        } catch (err) {
+          log.warn({ jobId: job.id, key, err: (err as Error).message }, 'runtime trace parse failed');
+          pending.delete(key);
+        }
+      });
+      if (pending.size > 0) await sleep(1000);
+    }
+
+    if (pending.size > 0) {
+      log.warn({ jobId: job.id, missing: [...pending.values()].map((s) => s.id) }, 'runtime evidence timed out');
+    }
+    if (traces.length === 0) return undefined;
+    return tracesToRuntimeBundle(traces, scenarios, changedComponents);
+  } finally {
+    await redis.quit();
+  }
+}
+
+function tracesToRuntimeBundle(
+  traces: RuntimeTrace[],
+  scenarios: RuntimeScenario[],
+  changedComponents: ComponentDescriptor[],
+): RuntimeBundle {
+  const byComponent: RuntimeBundle['byComponent'] = new Map();
+  const scenarioById = new Map(scenarios.map((s) => [s.id, s]));
+
+  for (const trace of traces) {
+    if (!trace.ok) continue;
+    const scenario = scenarioById.get(trace.scenarioId);
+    if (!scenario) continue;
+    const exercised = changedComponents.filter((c) => scenarioExercisesComponent(scenario, c));
+    const globallyAttributable = exercised.length === 1;
+
+    for (const comp of exercised) {
+      const current = byComponent.get(comp.className) ?? {
+        avgRenderCount: 0,
+        leakedSubscriptionCount: 0,
+        longTaskMs: [],
+        heapDeltaBytes: 0,
+        traceIds: [],
+      };
+
+      current.avgRenderCount += runtimeRenderCount(trace, comp, scenario, globallyAttributable);
+      current.leakedSubscriptionCount += trace.subscriptions.filter((s) =>
+        s.leaked && subscriptionBelongsToComponent(s, comp, globallyAttributable),
+      ).length;
+      if (globallyAttributable) {
+        current.longTaskMs.push(...trace.longTasks.map((t) => t.durationMs));
+      }
+      if (!current.traceIds.includes(trace.id)) current.traceIds.push(trace.id);
+      byComponent.set(comp.className, current);
+    }
+  }
+
+  return { byComponent };
+}
+
+function runtimeRenderCount(
+  trace: RuntimeTrace,
+  comp: ComponentDescriptor,
+  scenario: RuntimeScenario,
+  includeGlobalFallback: boolean,
+): number {
+  const selector = comp.selector ?? '';
+  const value = trace.renderCounts[comp.className]
+    ?? (selector ? trace.renderCounts[selector] : undefined)
+    ?? (includeGlobalFallback ? trace.renderCounts['__dom__'] : undefined)
+    ?? 0;
+  return value / Math.max(1, scenario.iterations);
+}
+
+function subscriptionBelongsToComponent(
+  sub: RuntimeTrace['subscriptions'][number],
+  comp: ComponentDescriptor,
+  includeGlobalFallback: boolean,
+): boolean {
+  if (sub.ownerComponent && sub.ownerComponent === comp.className) return true;
+  const file = sub.sourceLocation?.file;
+  if (file && normalizeRuntimePath(file).endsWith(normalizeRuntimePath(comp.tsFile))) return true;
+  return includeGlobalFallback && !sub.ownerComponent && !sub.sourceLocation;
+}
+
+function scenarioExercisesComponent(scenario: RuntimeScenario, comp: ComponentDescriptor): boolean {
+  return scenario.exercises.includes('*')
+    || scenario.exercises.includes(comp.className)
+    || (!!comp.selector && scenario.exercises.includes(comp.selector));
+}
+
+function normalizeRuntimePath(file: string): string {
+  return file.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function prepareWorkdir(job: ReviewJob, cfg: JobConfig, log: Logger): Promise<string> {
   const dir = await fs.mkdtemp(path.join(tmpdir(), 'abid-job-'));
   const git = simpleGit(dir);
@@ -205,21 +359,48 @@ interface JobConfig {
   cloneUrlWithAuth: string;
   mistralApiKey: string;
   mistralModel: string;
+  mistralEmbedModel: string;
   promptsDir: string;
   useFakeEmbeddings: boolean;
+  runtimeRedisUrl?: string;
+  runtimeBaseUrl?: string;
+  runtimeScenarios: RuntimeScenario[];
+  runtimeTimeoutMs: number;
 }
 
 async function loadJobConfig(job: ReviewJob): Promise<JobConfig> {
   // Production: fetch PAT + secrets from Key Vault via Workload Identity.
-  return {
+  const cfg: JobConfig = {
     organizationUrl: `https://dev.azure.com/${job.pr.organization}`,
     pat: requiredEnv('ABID_ADO_PAT'),
     cloneUrlWithAuth: `https://abid:${requiredEnv('ABID_ADO_PAT')}@dev.azure.com/${job.pr.organization}/${job.pr.project}/_git/${job.pr.repositoryName}`,
     mistralApiKey: requiredEnv('MISTRAL_API_KEY'),
-    mistralModel: process.env['MISTRAL_MODEL'] ?? 'mistral-large-latest',
+    mistralModel: process.env['MISTRAL_MODEL'] ?? 'devstral-medium-latest',
+    mistralEmbedModel: process.env['MISTRAL_EMBED_MODEL'] ?? 'codestral-embed',
     promptsDir: process.env['ABID_PROMPTS_DIR'] ?? path.join(process.cwd(), 'prompts'),
     useFakeEmbeddings: process.env['ABID_FAKE_EMBED'] === '1',
+    runtimeScenarios: await loadRuntimeScenarios(),
+    runtimeTimeoutMs: Number(process.env['ABID_RUNTIME_TIMEOUT_MS'] ?? 120_000),
   };
+  if (process.env['ABID_RUNTIME_REDIS_URL']) cfg.runtimeRedisUrl = process.env['ABID_RUNTIME_REDIS_URL'];
+  if (process.env['ABID_RUNTIME_BASE_URL']) cfg.runtimeBaseUrl = process.env['ABID_RUNTIME_BASE_URL'];
+  return cfg;
+}
+
+async function loadRuntimeScenarios(): Promise<RuntimeScenario[]> {
+  const rawJson = process.env['ABID_RUNTIME_SCENARIOS_JSON'];
+  if (rawJson) return parseRuntimeScenarios(rawJson, 'ABID_RUNTIME_SCENARIOS_JSON');
+
+  const file = process.env['ABID_RUNTIME_SCENARIOS_FILE'];
+  if (!file) return [];
+  const raw = await fs.readFile(path.resolve(file), 'utf8');
+  return parseRuntimeScenarios(raw, file);
+}
+
+function parseRuntimeScenarios(raw: string, source: string): RuntimeScenario[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) throw new Error(`runtime scenarios must be an array: ${source}`);
+  return parsed as RuntimeScenario[];
 }
 
 function requiredEnv(name: string): string {
@@ -233,10 +414,19 @@ function requiredEnv(name: string): string {
 // each other directly.
 import type { EmbedClient } from '@abid/deduplication-engine';
 class MistralEmbedAdapter implements EmbedClient {
-  constructor(private readonly client: MistralClient) {}
+  constructor(
+    private readonly client: MistralClient,
+    private readonly model: string,
+  ) {}
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
-    const vecs = await this.client.embed(texts);
+    const vecs = await this.client.embed(texts, this.model);
     return vecs.map((v) => new Float32Array(v));
   }
+}
+
+const RULE_PRECISION_BY_ID: Map<string, number> = new Map(ALL_RULES.map((rule) => [rule.id, rule.basePrecision]));
+
+function rulePrecisionOf(ruleId: string): number {
+  return RULE_PRECISION_BY_ID.get(ruleId) ?? 0.65;
 }

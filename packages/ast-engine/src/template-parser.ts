@@ -91,7 +91,7 @@ export function parseTemplateRef(ref: TemplateRef): TemplateAnalysis {
 
   const baseLine = ref.kind === 'external'
     ? 0
-    : linesBefore(ref.source.slice(0, 0), ref.startOffset, ref.source);
+    : linesBefore(ref.startOffset, ref.sourceFileText);
 
   const bindings: TemplateBinding[] = [];
   const guards: TemplateGuard[] = [];
@@ -211,7 +211,7 @@ function offsetToLine(source: string, offset: number): number {
   return line;
 }
 
-function linesBefore(_prefix: string, startOffset: number, fullSource: string): number {
+function linesBefore(startOffset: number, sourceFileText?: string): number {
   // For inline templates: count newlines in the *.ts file from char 0 up to startOffset.
   // We pass the full source slice because the orchestrator hands us the raw template
   // string; the .ts file content is not available to template-parser. The component-scan
@@ -220,7 +220,13 @@ function linesBefore(_prefix: string, startOffset: number, fullSource: string): 
   // here is the *template*, this currently returns 0 for inline templates.
   // The orchestrator translates inline template lines back to .ts file lines using
   // the component descriptor's location + the template-local line returned here.
-  return 0;
+  if (!sourceFileText || startOffset <= 0) return 0;
+  let lines = 0;
+  const capped = Math.min(startOffset, sourceFileText.length);
+  for (let i = 0; i < capped; i++) {
+    if (sourceFileText.charCodeAt(i) === 10) lines++;
+  }
+  return lines;
 }
 
 function collectMethodCalls(expr: string, line: number, inHotPath: boolean, out: TemplateMethodCall[]): void {

@@ -74,7 +74,9 @@ export const templateMethodCallRule = {
             message: {
               title: `${call.name}() runs on every change detection cycle`,
               body: '',
-              suggestion: '',
+              suggestion: `// Compute once when inputs change, then bind the value in the template.
+readonly ${toCachedName(call.name)} = computed(() => this.${call.name}());`,
+              suggestionLanguage: 'ts',
             },
           });
         }
@@ -88,4 +90,8 @@ export const templateMethodCallRule = {
 function isPureLookup(name: string): boolean {
   // Methods that are nearly always just object lookups — keep noise low.
   return /^(get|is|has)[A-Z]/.test(name) && name.length < 12;
+}
+
+function toCachedName(methodName: string): string {
+  return `${methodName.replace(/^[A-Z]/, (c) => c.toLowerCase())}Value`;
 }

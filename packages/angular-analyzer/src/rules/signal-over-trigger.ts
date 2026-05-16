@@ -78,7 +78,7 @@ export const signalOverTriggerRule = {
         ruleId: 'angular/signal-over-trigger',
         severity: 'info',
         confidence,
-        location: { file, startLine: 1 },  // refined by orchestrator to declaration line
+        location: { file, startLine: node.line },
         evidence,
         guarantees: [],
         message: {

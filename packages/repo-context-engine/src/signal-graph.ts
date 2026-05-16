@@ -15,6 +15,7 @@ export interface SignalNode {
   /** Class member or top-level binding name. */
   name: string;
   file: string;
+  line: number;
   /** Initial value type if statically known (e.g. for `signal<User | null>(null)`). */
   typeText?: string;
 }
@@ -82,6 +83,7 @@ export function buildSignalGraph(project: AstProject): SignalGraph {
           kind,
           name: prop.getName(),
           file,
+          line: prop.getSourceFile().getLineAndColumnAtPos(prop.getStart()).line,
           typeText: prop.getType().getText(),
         });
       }
