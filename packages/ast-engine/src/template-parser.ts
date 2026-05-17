@@ -209,12 +209,15 @@ export function parseTemplateRef(ref: TemplateRef): TemplateAnalysis {
 function expressionText(value: unknown): string {
   const maybe = value as { source?: string; ast?: { source?: string }; toString?: () => string };
   const source = maybe.source ?? maybe.ast?.source;
-  if (source) return source.trim();
+  if (source) return normalizeExpressionText(source);
 
   let text = maybe.toString ? maybe.toString() : String(value);
+  return normalizeExpressionText(text.replace(/\s+in\s+.+@\d+:\d+$/s, ''));
+}
+
+function normalizeExpressionText(text: string): string {
   const interpolation = /\{\{\s*([\s\S]*?)\s*\}\}/.exec(text);
-  if (interpolation) text = interpolation[1]!;
-  return text.replace(/\s+in\s+.+@\d+:\d+$/s, '').trim();
+  return (interpolation ? interpolation[1]! : text).trim();
 }
 
 function offsetToLine(source: string, offset: number): number {

@@ -1,0 +1,1764 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Abid Review Command Center</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07090d;
+      --panel: rgba(15, 20, 29, 0.88);
+      --panel-2: rgba(22, 29, 40, 0.82);
+      --line: rgba(148, 163, 184, 0.2);
+      --text: #eef4ff;
+      --muted: #93a4b8;
+      --cyan: #35d0ff;
+      --green: #6ef3a5;
+      --amber: #ffd166;
+      --pink: #ff6b9a;
+      --violet: #b692ff;
+      --blue: #7aa2ff;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 20% -10%, rgba(53, 208, 255, 0.14), transparent 34rem),
+        radial-gradient(circle at 78% 6%, rgba(255, 107, 154, 0.13), transparent 30rem),
+        linear-gradient(135deg, #07090d 0%, #0a1018 46%, #08090f 100%);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+
+    .shell {
+      width: min(1880px, 100%);
+      margin: 0 auto;
+      padding: 18px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      background: rgba(10, 15, 22, 0.78);
+      backdrop-filter: blur(18px);
+      border-radius: 8px;
+      position: sticky;
+      top: 12px;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: conic-gradient(from 220deg, var(--cyan), var(--green), var(--amber), var(--pink), var(--cyan));
+      color: #041018;
+      font-weight: 900;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: clamp(18px, 2vw, 26px); letter-spacing: 0; }
+    .sub { margin-top: 4px; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .status-strip {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: end;
+      gap: 8px;
+    }
+
+    .pill {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      color: #d7e4f7;
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 16px var(--green);
+      animation: pulse 1.4s infinite;
+    }
+
+    .dot.idle {
+      background: var(--amber);
+      box-shadow: 0 0 14px rgba(255, 209, 102, 0.55);
+      animation: none;
+    }
+
+    .dot.offline {
+      background: var(--pink);
+      box-shadow: 0 0 14px rgba(255, 107, 154, 0.5);
+      animation: none;
+    }
+
+    .dot.demo {
+      background: var(--cyan);
+      box-shadow: 0 0 14px rgba(53, 208, 255, 0.55);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 340px minmax(560px, 1fr) 430px;
+      grid-template-rows: minmax(520px, 54vh) 390px 330px;
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+      border-radius: 8px;
+      overflow: hidden;
+      min-width: 0;
+      box-shadow: 0 18px 80px rgba(0, 0, 0, 0.24);
+    }
+
+    .panel-head {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,0.035);
+    }
+
+    .panel h2 { font-size: 13px; text-transform: uppercase; color: #d7e4f7; }
+    .panel-body { padding: 14px; height: calc(100% - 48px); overflow: auto; }
+
+    .file-analysis-body {
+      display: grid;
+      grid-template-rows: 152px minmax(0, 1fr);
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .timeline { grid-row: span 2; }
+    .graph { grid-row: span 2; }
+    .runtime { grid-column: 2; }
+    .comments { grid-column: 3; }
+    .context { grid-column: span 2; }
+
+    .step {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.11);
+    }
+
+    .step:last-child { border-bottom: 0; }
+    .check {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(110, 243, 165, 0.5);
+      color: var(--green);
+      font-size: 12px;
+      background: rgba(110, 243, 165, 0.08);
+    }
+
+    .step.running .check {
+      color: var(--cyan);
+      border-color: rgba(53, 208, 255, 0.7);
+      box-shadow: 0 0 22px rgba(53, 208, 255, 0.26);
+    }
+
+    .step.pending .check {
+      color: var(--muted);
+      border-color: rgba(148, 163, 184, 0.28);
+      background: rgba(148, 163, 184, 0.05);
+    }
+
+    .step.skipped .check {
+      color: var(--amber);
+      border-color: rgba(255, 209, 102, 0.38);
+      background: rgba(255, 209, 102, 0.07);
+    }
+
+    .step-title { font-size: 13px; color: #f5f8ff; }
+    .step-note { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .file-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 190px;
+      gap: 12px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .scope-strip {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 10px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .scope-card {
+      min-height: 0;
+      padding: 10px;
+      border: 1px solid rgba(53, 208, 255, 0.22);
+      border-radius: 8px;
+      background: rgba(53, 208, 255, 0.055);
+      overflow: hidden;
+    }
+
+    .scope-card b {
+      display: block;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .scope-card .scope-file {
+      margin-top: 8px;
+      font-size: 11px;
+      line-height: 1.3;
+      overflow-wrap: anywhere;
+    }
+
+    .scope-card span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .scan-queue {
+      min-height: 64px;
+      display: flex;
+      gap: 7px;
+      overflow: hidden;
+      align-items: stretch;
+    }
+
+    .scan-item {
+      min-width: 170px;
+      max-width: 210px;
+      padding: 8px 9px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+    }
+
+    .scan-item b {
+      display: block;
+      color: #eef4ff;
+      font-size: 11px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .scan-item span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .scan-item.active { border-color: rgba(53,208,255,.55); background: rgba(53,208,255,.08); }
+    .scan-item.done { border-color: rgba(110,243,165,.32); }
+    .scan-item.pending { opacity: .74; }
+
+    .queue-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(150px, 0.85fr);
+      gap: 10px;
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .file-queue {
+      display: grid;
+      gap: 7px;
+      align-content: start;
+      min-height: 0;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .queue-row {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 9px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      font-size: 11px;
+    }
+
+    .queue-row strong {
+      display: block;
+      color: #eef4ff;
+      overflow-wrap: anywhere;
+    }
+
+    .queue-row span { color: var(--muted); }
+    .queue-row.running { border-color: rgba(53,208,255,.58); background: rgba(53,208,255,.08); }
+    .queue-row.done { border-color: rgba(110,243,165,.34); }
+    .queue-row.pending { opacity: .72; }
+
+    .phase-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 7px;
+      align-content: start;
+      min-height: 0;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .phase-chip {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 8px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .phase-chip.running { color: #eef4ff; border-color: rgba(53,208,255,.55); background: rgba(53,208,255,.08); }
+    .phase-chip.done { color: var(--green); border-color: rgba(110,243,165,.32); }
+
+    .code {
+      background: #070b12;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 8px;
+      overflow: hidden;
+      font-family: "Cascadia Code", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 34px minmax(0, 1fr);
+    }
+
+    .codebar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+      color: #a9bad2;
+    }
+
+    .code pre {
+      margin: 0;
+      padding: 12px 0;
+      overflow: auto;
+      min-height: 0;
+    }
+
+    .line {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      padding: 0 12px 0 0;
+      white-space: pre;
+    }
+    .ln { color: #526078; text-align: right; padding-right: 12px; user-select: none; }
+    .hot { background: rgba(255, 209, 102, 0.12); color: #fff7df; }
+    .bad { background: rgba(255, 107, 154, 0.13); }
+    .good { color: var(--green); }
+    .kw { color: #7aa2ff; }
+    .fn { color: #ffd166; }
+    .str { color: #6ef3a5; }
+
+    .related {
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      min-height: 0;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .mini {
+      padding: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 8px;
+      background: var(--panel-2);
+    }
+    .mini strong { display: block; font-size: 12px; color: #eef4ff; overflow-wrap: anywhere; }
+    .mini span { display: block; margin-top: 5px; font-size: 11px; color: var(--muted); line-height: 1.35; }
+
+    .thought {
+      display: grid;
+      grid-template-columns: 4px 1fr auto;
+      gap: 10px;
+      padding: 11px 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    .rail { border-radius: 99px; background: linear-gradient(var(--cyan), var(--violet)); }
+    .thought p { color: #dbe7f8; font-size: 13px; line-height: 1.45; }
+    .delta { color: var(--green); font-size: 12px; white-space: nowrap; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .metric {
+      padding: 10px;
+      min-height: 76px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.035);
+    }
+    .metric b { font-size: 22px; display: block; }
+    .metric span { color: var(--muted); font-size: 11px; }
+
+    .trace {
+      height: 180px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    canvas { width: 100%; height: 100%; display: block; }
+    .heatmap {
+      display: grid;
+      grid-template-columns: repeat(16, 1fr);
+      gap: 3px;
+      align-content: stretch;
+    }
+    .cell {
+      border-radius: 3px;
+      background: rgba(53,208,255,0.1);
+      min-height: 8px;
+    }
+
+    .comment {
+      padding: 12px;
+      border: 1px solid rgba(110, 243, 165, 0.32);
+      border-radius: 8px;
+      background: rgba(110, 243, 165, 0.06);
+      margin-bottom: 10px;
+    }
+
+    .comment.warn {
+      border-color: rgba(255, 209, 102, 0.34);
+      background: rgba(255, 209, 102, 0.06);
+    }
+
+    .comment.info {
+      border-color: rgba(53, 208, 255, 0.3);
+      background: rgba(53, 208, 255, 0.055);
+    }
+    .comment-text { margin-top: 10px; color: #f4fff7; font-size: 13px; line-height: 1.55; }
+    .confidence {
+      height: 8px;
+      margin-top: 12px;
+      border-radius: 99px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+    }
+    .confidence div { height: 100%; width: 92%; background: linear-gradient(90deg, var(--green), var(--cyan)); }
+    .why { margin-top: 12px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .duplicate-list, .skip-list, .context-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      font-size: 12px;
+    }
+    .row span { color: var(--muted); overflow-wrap: anywhere; }
+    .tag { color: var(--amber); font-size: 11px; white-space: nowrap; }
+
+    .graph-wrap { position: relative; height: 100%; min-height: 330px; }
+    #repoGraph { height: 100%; }
+    .legend {
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .legend .pill { background: rgba(7, 10, 16, 0.78); }
+
+    .arch {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 8px;
+    }
+    .arch .mini { min-height: 100px; }
+    .mono { font-family: "Cascadia Code", Consolas, monospace; }
+
+    .rule-board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .rule-card {
+      min-height: 76px;
+      padding: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+    }
+
+    .rule-card b { display: block; font-size: 12px; color: #f5f8ff; }
+    .rule-card span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .rule-card.active { border-color: rgba(53, 208, 255, 0.45); box-shadow: inset 0 0 0 1px rgba(53,208,255,.08); }
+    .rule-card.issue { border-color: rgba(255, 107, 154, 0.42); }
+    .rule-card.clean { border-color: rgba(110, 243, 165, 0.28); }
+
+    .live-log {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .stream-flash {
+      animation: flash 0.65s ease-out;
+    }
+
+    @keyframes flash {
+      0% { box-shadow: inset 0 0 0 1px rgba(53,208,255,.75), 0 0 22px rgba(53,208,255,.25); }
+      100% { box-shadow: none; }
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.45); opacity: 0.55; }
+    }
+
+    @media (max-width: 1300px) {
+      .grid { grid-template-columns: 320px 1fr; grid-template-rows: auto; }
+      .file-analysis-body { min-height: 500px; }
+      .graph, .comments, .context { grid-column: span 2; }
+      .timeline { grid-row: auto; }
+    }
+    @media (max-width: 820px) {
+      .shell { padding: 10px; }
+      header, .file-hero, .grid, .trace, .arch, .scope-strip { grid-template-columns: 1fr; }
+      .timeline, .graph, .runtime, .comments, .context { grid-column: auto; grid-row: auto; }
+      .grid { display: grid; }
+      .panel { min-height: 300px; }
+      .file-analysis-body { grid-template-rows: 280px 420px; overflow: visible; }
+      .scope-strip { overflow: visible; }
+      .queue-grid { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .status-strip { justify-content: start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand">
+        <div class="mark">A</div>
+        <div>
+          <h1>Abid Review Command Center</h1>
+          <p class="sub">No PR selected · Angular runtime-aware review · live explainability stream</p>
+        </div>
+      </div>
+      <div class="status-strip">
+        <div class="pill"><span class="dot idle"></span>Connecting to live review</div>
+        <div class="pill">Waiting for SSE</div>
+        <div class="pill">0 files loaded</div>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="panel timeline">
+        <div class="panel-head"><h2>Live Review Timeline</h2><span class="pill">SSE stream</span></div>
+        <div class="panel-body" id="timeline"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Live File Analysis</h2><span class="pill">waiting for changed line</span></div>
+        <div class="panel-body file-analysis-body">
+          <div class="scope-strip" id="scopeStrip"></div>
+          <div class="file-hero">
+            <div class="code">
+              <div class="codebar">Waiting for live stream</div>
+              <pre>
+<div class="line"><span class="ln">--</span><span>No file loaded yet.</span></div>
+<div class="line"><span class="ln">--</span><span>Start the backend SSE stream to show real PR files.</span></div>
+              </pre>
+            </div>
+            <div class="related">
+              <div class="mini"><strong>No related files yet</strong><span>Related files will appear only after the live backend sends analysis events.</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>AI Thinking Panel</h2><span class="pill">safe summary</span></div>
+        <div class="panel-body" id="thoughts"></div>
+      </section>
+
+      <section class="panel graph">
+        <div class="panel-head"><h2>Repository Graph Traversal</h2><span class="pill">AST + imports + runtime</span></div>
+        <div class="panel-body graph-wrap">
+          <canvas id="repoGraph"></canvas>
+          <div class="legend">
+            <div class="pill">component</div>
+            <div class="pill">service</div>
+            <div class="pill">template</div>
+            <div class="pill">runtime trace</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel runtime">
+        <div class="panel-head"><h2>Runtime Analysis</h2><span class="pill">Playwright + CDP</span></div>
+        <div class="panel-body">
+          <div class="metrics" id="metrics"></div>
+          <div class="trace">
+            <canvas id="runtimeChart"></canvas>
+            <div class="heatmap" id="heatmap"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel comments">
+        <div class="panel-head"><h2>Comment Preview</h2><span class="pill">before ADO post</span></div>
+        <div class="panel-body">
+          <div class="comment info">
+            <div class="pill">waiting</div>
+            <p class="comment-text">No inline comment loaded yet.<br />The preview will update when the backend sends approved findings.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>False Positive Explainer</h2><span class="pill">trust layer</span></div>
+        <div class="panel-body skip-list">
+          <div class="row"><span>No skipped issue loaded yet. Backend skip reasons will appear here.</span><b class="tag">waiting</b></div>
+        </div>
+      </section>
+
+      <section class="panel context">
+        <div class="panel-head"><h2>Token + Context Window</h2><span class="pill">no hidden chain-of-thought</span></div>
+        <div class="panel-body">
+          <div class="arch">
+            <div class="mini"><strong>1. Diff Engine</strong><span>34 files, changed line map, ADO changeTrackingId.</span></div>
+            <div class="mini"><strong>2. Repo Index</strong><span>Components, services, resolvers, signal graph, import centrality.</span></div>
+            <div class="mini"><strong>3. Runtime Trace</strong><span>CDP heap snapshots, network, DOM mutations, RxJS leaks.</span></div>
+            <div class="mini"><strong>4. Retrieval</strong><span>Relevant chunks selected for Mistral, not full repo dump.</span></div>
+            <div class="mini"><strong>5. Confidence</strong><span>Rule precision, runtime proof, LLM agreement, guarantees.</span></div>
+            <div class="mini"><strong>6. Azure Post</strong><span>Inline thread preview with duplicate group and skip reasons.</span></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const timeline = [
+      ['done', 'PR received', 'Azure webhook accepted. Iteration 7 is being reviewed.'],
+      ['done', 'Parsing changed files', 'Unified diff mapped to exact new-line anchors.'],
+      ['done', 'Building repository graph', '410 Angular components, services, resolvers, signals indexed.'],
+      ['done', 'Analyzing Angular templates', 'Template + TypeScript binding checked together.'],
+      ['running', 'Tracing RxJS flow', 'subscribe() calls matched against cleanup guarantees.'],
+      ['running', 'Checking runtime render cycles', 'Playwright trace is streaming CDP metrics.'],
+      ['done', 'Detecting duplicate issues', '15 sibling findings grouped into summary only.'],
+      ['running', 'Generating AI comments', 'Mistral receives diff, evidence, trace summary, and confidence notes.'],
+      ['done', 'Posting Azure comments', '2 exact inline comments are ready for approval.']
+    ];
+
+    const thoughts = [
+      ['AI noticed repeated subscribe calls without cleanup.', '+12%'],
+      ['Checking if DestroyRef is used at this exact call site.', '+5%'],
+      ['Comparing service observable type with HttpClient completion rules.', '+8%'],
+      ['Runtime trace shows 2 subscriptions stayed open after navigation.', '+17%'],
+      ['Duplicate issue found at line 73. Merging into one comment.', 'dedup'],
+      ['False positive check passed. No resolver or template guard can explain this away.', '+9%']
+    ];
+
+    const metrics = [
+      ['42', 'renders'],
+      ['118ms', 'change detection'],
+      ['2', 'open subscriptions'],
+      ['276', 'DOM mutations'],
+      ['6', 'API calls']
+    ];
+
+    function renderLists() {
+      document.getElementById('timeline').innerHTML = timeline.map((s) => `
+        <div class="step ${s[0] === 'running' ? 'running' : ''}">
+          <div class="check">${s[0] === 'done' ? '✓' : '•'}</div>
+          <div><div class="step-title">${s[1]}</div><div class="step-note">${s[2]}</div></div>
+        </div>`).join('');
+      document.getElementById('thoughts').innerHTML = thoughts.map((t) => `
+        <div class="thought"><div class="rail"></div><p>${t[0]}</p><b class="delta">${t[1]}</b></div>`).join('');
+      document.getElementById('metrics').innerHTML = metrics.map((m) => `
+        <div class="metric"><b>${m[0]}</b><span>${m[1]}</span></div>`).join('');
+      document.getElementById('heatmap').innerHTML = Array.from({ length: 96 }, (_, i) => {
+        const colors = ['rgba(53,208,255,.13)','rgba(110,243,165,.18)','rgba(255,209,102,.24)','rgba(255,107,154,.28)'];
+        return `<div class="cell" style="background:${colors[(i * 7 + Math.floor(i / 9)) % colors.length]}"></div>`;
+      }).join('');
+    }
+
+    function graph(canvasId, nodes, edges) {
+      const c = document.getElementById(canvasId);
+      const ctx = c.getContext('2d');
+      const rect = c.getBoundingClientRect();
+      c.width = rect.width * devicePixelRatio;
+      c.height = rect.height * devicePixelRatio;
+      ctx.scale(devicePixelRatio, devicePixelRatio);
+      ctx.clearRect(0,0,rect.width,rect.height);
+      edges.forEach(([a,b]) => {
+        ctx.strokeStyle = 'rgba(147,164,184,.28)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(nodes[a].x * rect.width, nodes[a].y * rect.height);
+        ctx.lineTo(nodes[b].x * rect.width, nodes[b].y * rect.height);
+        ctx.stroke();
+      });
+      Object.values(nodes).forEach((n) => {
+        const x = n.x * rect.width, y = n.y * rect.height;
+        ctx.fillStyle = n.color;
+        ctx.beginPath();
+        ctx.arc(x, y, n.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#eef4ff';
+        ctx.font = '12px Inter, sans-serif';
+        ctx.fillText(n.label, x + n.r + 7, y + 4);
+      });
+    }
+
+    function runtimeChart() {
+      const c = document.getElementById('runtimeChart');
+      const ctx = c.getContext('2d');
+      const rect = c.getBoundingClientRect();
+      c.width = rect.width * devicePixelRatio;
+      c.height = rect.height * devicePixelRatio;
+      ctx.scale(devicePixelRatio, devicePixelRatio);
+      ctx.clearRect(0,0,rect.width,rect.height);
+      const bars = [44, 82, 31, 118, 55, 92, 73, 126, 39, 68, 96, 48];
+      bars.forEach((v, i) => {
+        const x = i * (rect.width / bars.length) + 5;
+        const h = (v / 140) * (rect.height - 24);
+        ctx.fillStyle = v > 100 ? '#ff6b9a' : v > 75 ? '#ffd166' : '#35d0ff';
+        ctx.fillRect(x, rect.height - h - 10, rect.width / bars.length - 10, h);
+      });
+    }
+
+    function draw() {
+      const isDemoGraph = window.reviewGraphMode === 'demo';
+      graph('repoGraph', isDemoGraph ? {
+        a: {x:.18,y:.2,r:12,color:'#35d0ff',label:'AutomationSettingsComponent'},
+        b: {x:.56,y:.18,r:10,color:'#6ef3a5',label:'DialerService'},
+        c: {x:.78,y:.38,r:10,color:'#ffd166',label:'API /global-config'},
+        d: {x:.28,y:.58,r:10,color:'#b692ff',label:'template.html'},
+        e: {x:.62,y:.72,r:12,color:'#ff6b9a',label:'runtime trace'},
+        f: {x:.15,y:.82,r:9,color:'#7aa2ff',label:'DestroyRef scan'}
+      } : {
+        a: {x:.2,y:.32,r:11,color:'#35d0ff',label:'waiting for PR diff'},
+        b: {x:.52,y:.22,r:10,color:'#6ef3a5',label:'waiting for repo graph'},
+        c: {x:.76,y:.46,r:10,color:'#ffd166',label:'waiting for runtime trace'},
+        d: {x:.38,y:.72,r:10,color:'#b692ff',label:'no backend events yet'}
+      }, isDemoGraph ? [['a','b'],['b','c'],['a','d'],['a','e'],['a','f'],['b','e']] : [['a','b'],['b','c'],['a','d']]);
+      runtimeChart();
+    }
+
+    renderLists();
+    draw();
+    window.addEventListener('resize', draw);
+  </script>
+  <script>
+    const liveState = {
+      pointer: 0,
+      comments: [],
+      thoughts: [],
+      checkedFiles: new Set(),
+      completedRules: new Set(),
+      completedFiles: new Set(),
+      fileIndex: 0,
+      phaseIndex: 0,
+      displayPhaseIndex: 0,
+      activeFile: '',
+      skips: [],
+      metrics: { renders: 0, changeDetectionMs: 0, subscriptionsOpen: 0, domMutations: 0, apiCalls: 0 },
+      activeRule: 'diff',
+      streamMode: 'waiting',
+      streamStatus: 'connecting',
+      streamMessage: 'Connecting to live review stream.',
+      currentPhaseTitle: 'Waiting for live review',
+      currentPhaseDetail: 'No PR has been selected yet.'
+    };
+
+    let localStreamTimer = null;
+    let activeEventSource = null;
+
+    const demoSkips = [
+      { text: 'Null issue skipped: resolver guarantees value before route activation.', tag: 'guarded' },
+      { text: 'HTTP subscribe skipped: HttpClient observable completes after one response.', tag: 'safe' },
+      { text: 'Template method skipped: OnPush plus signal read keeps rerenders bounded.', tag: 'safe' },
+      { text: 'Duplicate comments skipped: one primary Azure comment will mention siblings.', tag: 'deduped' }
+    ];
+
+    const demoAnalysisScope = [
+      ['src/app/app.component.ts', 'changed root component', 'subscription'],
+      ['src/app/app.component.html', 'changed root template', 'template'],
+      ['src/app/features/global-config/settings/module/automation-settings/automation-settings.component.ts', 'changed component', 'subscription'],
+      ['src/app/features/global-config/settings/module/automation-settings/automation-settings.component.html', 'changed template', 'template'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.component.ts', 'changed component', 'subscription'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.component.html', 'changed template', 'template'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-info/schedule-assignment-info.component.ts', 'changed component', 'null'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-info/schedule-assignment-info.component.html', 'changed template', 'null'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-bulk-delete/schedule-assignment-bulk-delete.component.ts', 'changed component', 'subscription'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-bulk-delete/schedule-assignment-bulk-delete.component.html', 'changed template', 'template'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-actions/schedule-assignment-actions.component.ts', 'changed component', 'subscription'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-actions/schedule-assignment-actions.component.html', 'changed template', 'template'],
+      ['src/app/features/leads/cache/lead-cache.service.ts', 'changed cache service', 'indexeddb'],
+      ['src/app/features/leads/models/lead.model.ts', 'changed model type', 'typing'],
+      ['src/app/features/leads/lead-list/lead-list.component.ts', 'changed component', 'trackby'],
+      ['src/app/features/leads/lead-list/lead-list.component.html', 'changed template', 'trackby'],
+      ['src/app/features/leads/lead-row/lead-row.component.ts', 'changed row component', 'template'],
+      ['src/app/features/leads/lead-row/lead-row.component.html', 'changed row template', 'template'],
+      ['src/app/features/dashboard/dashboard-summary/dashboard-summary.component.ts', 'changed component', 'template'],
+      ['src/app/features/dashboard/dashboard-summary/dashboard-summary.component.html', 'changed template', 'template'],
+      ['src/app/features/dashboard/dashboard-store.service.ts', 'changed state service', 'state'],
+      ['src/app/features/leads/state/lead.effects.ts', 'changed NgRx effect', 'state'],
+      ['src/app/features/leads/services/lead-api.service.ts', 'changed API service', 'network'],
+      ['src/app/shared/modal/confirm.component.ts', 'changed modal component', 'lifecycle'],
+      ['src/app/shared/table/data-table.component.ts', 'changed shared component', 'trackby'],
+      ['src/app/shared/table/data-table.component.html', 'changed table template', 'trackby'],
+      ['src/app/environments/environment.ts', 'changed config', 'security'],
+      ['src/app/features/global-config/settings/module/automation-settings/automation.models.ts', 'changed interface', 'typing'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.models.ts', 'changed interface', 'typing'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-api.service.ts', 'changed API service', 'network'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.store.ts', 'changed state store', 'state'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-form.component.ts', 'changed form component', 'forms'],
+      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-form.component.html', 'changed form template', 'forms'],
+      ['src/app/shared/utils/date-range.ts', 'changed helper', 'complexity']
+    ];
+
+    let analysisScope = [];
+
+    const pipelinePhases = [
+      ['diff', 'PR diff parsing'],
+      ['queue', 'Queue changed file'],
+      ['ast', 'Build TypeScript AST'],
+      ['template', 'Analyze Angular template'],
+      ['context', 'Open related files only if needed'],
+      ['runtime', 'Runtime validation'],
+      ['findings', 'Generate findings'],
+      ['dedup', 'Deduplicate findings'],
+      ['stream', 'Stream result to UI'],
+      ['complete', 'Mark file completed']
+    ];
+
+    const issueCategories = [
+      'Null/undefined', 'Runtime crashes', 'RxJS', 'Subscription leaks', 'Repeated API calls',
+      'Performance', 'Unnecessary rerenders', 'Change detection', 'Signals', 'State sync',
+      'IndexedDB/cache', 'Duplicate logic', 'Dead code', 'Expensive loops', 'Template functions',
+      'Async handling', 'Race conditions', 'Error handling', 'API misuse', 'Security',
+      'Architecture', 'Large component', 'Forms', 'Typing', 'Promise handling',
+      'SSR/hydration', 'DOM performance', 'Event listeners', 'N+1 calls', 'Loading states',
+      'Lifecycle', 'trackBy', 'OnPush', 'Signal updates', 'Store management',
+      'Dependency injection', 'Circular deps', 'Template rendering', 'Redundant calculations', 'Runtime bottlenecks'
+    ];
+
+    const ruleChecks = [
+      { id: 'diff', name: 'Diff map', state: 'clean', text: 'Changed-line anchors ready.' },
+      { id: 'subscription', name: 'RxJS cleanup', state: 'active', text: 'Checking subscribe lifetimes.' },
+      { id: 'null', name: 'Null guards', state: 'pending', text: 'Waiting for template proof.' },
+      { id: 'trackby', name: 'trackBy', state: 'pending', text: 'Checking repeated DOM lists.' },
+      { id: 'template', name: 'Template calls', state: 'pending', text: 'Checking hot-path methods.' },
+      { id: 'indexeddb', name: 'IndexedDB cache', state: 'pending', text: 'Checking stale read races.' }
+    ];
+
+    const liveFrames = [
+      {
+        rule: 'diff',
+        timeline: ['done', 'PR received', 'Azure webhook accepted. Iteration 7 is being reviewed.'],
+        file: 'src/app/features/global-config/settings/module/automation-settings/automation-settings.component.ts',
+        line: 147,
+        code: [
+          [140, 'saveDialerConfig(payload: DialerConfig) {', ''],
+          [141, '  this.loading = true;', 'hot'],
+          [142, '  this.dialerService.updateDialerConfiguration(payload)', 'bad'],
+          [143, '    .subscribe((res) => {', 'bad'],
+          [144, '      this.loading = false;', ''],
+          [145, '      this.reloadDialerConfig();', ''],
+          [146, '    });', ''],
+          [147, '  this.dialerService.geteDialerConfiguration()', 'bad'],
+          [148, '    .subscribe((config) => this.config = config);', 'bad'],
+          [149, '}', '']
+        ],
+        related: [
+          ['dialer.service.ts', 'Opened because component calls API observable.'],
+          ['automation-settings.component.html', 'Opened because template reads updated config.'],
+          ['global-config.module.ts', 'Opened to verify provider lifetime.'],
+          ['DestroyRef import scan', 'No call-site cleanup proof found.']
+        ],
+        thought: ['AI started with changed lines only, then opened files needed to prove lifetime and template impact.', '+4%'],
+        metrics: { renders: 8, changeDetectionMs: 24, subscriptionsOpen: 0, domMutations: 42, apiCalls: 1 }
+      },
+      {
+        rule: 'subscription',
+        timeline: ['running', 'Tracing RxJS flow', 'subscribe() calls matched against cleanup guarantees.'],
+        file: 'src/app/app.component.ts',
+        line: 177,
+        code: [
+          [172, 'this.router.events', 'bad'],
+          [173, '  .pipe(filter((event) => event instanceof NavigationEnd))', ''],
+          [174, '  .subscribe(() => {', 'bad'],
+          [175, '    this.refreshMenu();', ''],
+          [176, '  });', ''],
+          [177, '// summary-only: long-lived app root reduces leak risk', 'hot']
+        ],
+        related: [
+          ['app-routing.module.ts', 'Opened to inspect router lifecycle.'],
+          ['menu.service.ts', 'Opened because subscription calls refreshMenu().'],
+          ['auth.service.ts', 'Opened because app root owns auth state.']
+        ],
+        thought: ['Found subscribe() with no takeUntilDestroyed, no take(1), no first(), and no manual unsubscribe field.', '+18%'],
+        metrics: { renders: 24, changeDetectionMs: 61, subscriptionsOpen: 1, domMutations: 118, apiCalls: 3 }
+      },
+      {
+        rule: 'null',
+        timeline: ['done', 'Checking null safety', 'Template reads were compared with types, route resolvers, @if guards, and optional chaining.'],
+        file: 'src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-info.component.html',
+        line: 231,
+        code: [
+          [226, '<section *ngIf="assignment as data">', 'good'],
+          [227, '  <h3>{{ data.name }}</h3>', 'good'],
+          [228, '  <span>{{ data.owner?.fullName }}</span>', 'good'],
+          [229, '</section>', ''],
+          [230, '<button (click)="close()">Close</button>', ''],
+          [231, '<app-history [items]="history$ | async"></app-history>', 'good']
+        ],
+        related: [
+          ['schedule-assignment.resolver.ts', 'Opened because route may guarantee data.'],
+          ['schedule-assignment-info.component.ts', 'Opened to inspect field types.'],
+          ['route.config.ts', 'Opened to verify resolver mapping.']
+        ],
+        thought: ['Possible null issue was skipped because resolver and template guard both prove the value exists.', 'skip'],
+        skip: { text: 'Null warning skipped: @if/*ngIf guard and optional chaining already protect the binding.', tag: 'guarded' },
+        metrics: { renders: 31, changeDetectionMs: 72, subscriptionsOpen: 1, domMutations: 156, apiCalls: 3 }
+      },
+      {
+        rule: 'trackby',
+        timeline: ['done', 'Checking Angular list rendering', 'ngFor/@for blocks checked for trackBy or modern track expressions.'],
+        file: 'src/app/features/leads/lead-list/lead-list.component.html',
+        line: 44,
+        code: [
+          [40, '@for (lead of leads(); track lead.id) {', 'good'],
+          [41, '  <app-lead-row [lead]="lead"></app-lead-row>', 'good'],
+          [42, '} @empty {', ''],
+          [43, '  <p>No leads yet</p>', ''],
+          [44, '}', '']
+        ],
+        related: [
+          ['lead-list.component.ts', 'Opened to verify leads() is a signal.'],
+          ['lead-row.component.ts', 'Opened because list renders this component.'],
+          ['lead.model.ts', 'Opened to verify stable id field.']
+        ],
+        thought: ['List rendering is safe here. @for already has a track expression, so no comment will be posted.', 'clean'],
+        skip: { text: 'trackBy issue skipped: modern @for track expression already exists.', tag: 'clean' },
+        metrics: { renders: 36, changeDetectionMs: 80, subscriptionsOpen: 1, domMutations: 186, apiCalls: 3 }
+      },
+      {
+        rule: 'template',
+        timeline: ['running', 'Checking template hot paths', 'Template method calls are compared with OnPush, signals, and render counts.'],
+        file: 'src/app/features/dashboard/dashboard-summary/dashboard-summary.component.html',
+        line: 22,
+        code: [
+          [18, '<section class="summary">', ''],
+          [19, '  <span>{{ getTotal() }}</span>', 'hot'],
+          [20, '  <span>{{ statusLabel() }}</span>', 'hot'],
+          [21, '</section>', ''],
+          [22, '<!-- summary-only after OnPush/runtime check -->', 'good']
+        ],
+        related: [
+          ['dashboard-summary.component.ts', 'Opened to inspect OnPush and signal usage.'],
+          ['dashboard-store.service.ts', 'Opened because template reads store state.'],
+          ['dashboard-summary.component.spec.ts', 'Opened to compare expected render behavior.']
+        ],
+        thought: ['Template method call found, but OnPush plus signal input keeps rerender count low. Keeping it out of Azure comments.', 'summary'],
+        skip: { text: 'Template-method finding kept summary-only because runtime render count stayed below threshold.', tag: 'summary' },
+        metrics: { renders: 39, changeDetectionMs: 86, subscriptionsOpen: 1, domMutations: 201, apiCalls: 4 }
+      },
+      {
+        rule: 'subscription',
+        timeline: ['done', 'Checking modal lifecycle subscriptions', 'Modal onHidden streams checked against component destroy and single-use modal scope.'],
+        file: 'src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-bulk-delete/schedule-assignment-bulk-delete.component.ts',
+        line: 70,
+        code: [
+          [66, 'const modalRef = this.modalService.show(ConfirmComponent);', ''],
+          [67, 'modalRef.onHidden.subscribe(() => {', 'bad'],
+          [68, '  this.reload();', ''],
+          [69, '});', ''],
+          [70, '// summary-only: modal lifetime uncertain', 'hot']
+        ],
+        related: [
+          ['confirm.component.ts', 'Opened to inspect modal close path.'],
+          ['schedule-assignment.component.ts', 'Opened because parent creates modal.'],
+          ['ngx-bootstrap modal typings', 'Opened to check onHidden completion behavior.']
+        ],
+        thought: ['Modal stream has possible leak shape, but confidence stayed below inline threshold because modal completion behavior is unclear.', 'summary'],
+        skip: { text: 'Modal onHidden finding kept summary-only: library may complete the stream after close.', tag: 'summary' },
+        metrics: { renders: 40, changeDetectionMs: 94, subscriptionsOpen: 1, domMutations: 226, apiCalls: 4 }
+      },
+      {
+        rule: 'subscription',
+        timeline: ['done', 'Runtime validation', 'Playwright navigation confirmed one subscription stayed open after component destroy.'],
+        thought: ['Runtime trace confirmed the static finding. Confidence increased enough for an inline Azure comment.', '+22%'],
+        comment: {
+          type: 'warn',
+          title: 'Subscription is not cleaned up',
+          file: 'automation-settings.component.ts',
+          line: 147,
+          confidence: 92,
+          body: 'This subscription is not cleaned up.<br>It can keep running after this component is gone.<br>Please add <span class="mono">takeUntilDestroyed</span> before <span class="mono">subscribe()</span>.',
+          why: 'Static AST found no cleanup. Runtime trace kept 2 subscriptions open after navigation.',
+          duplicates: ['automation-settings.component.ts:73', 'app.component.ts:140 summary-only', 'schedule-assignment.component.ts:675 low confidence']
+        },
+        metrics: { renders: 42, changeDetectionMs: 118, subscriptionsOpen: 2, domMutations: 276, apiCalls: 6 }
+      },
+      {
+        rule: 'indexeddb',
+        timeline: ['done', 'Checking IndexedDB cache flow', 'Writes and reads checked for non-awaited stale-cache races.'],
+        file: 'src/app/cache/lead-cache.service.ts',
+        line: 88,
+        code: [
+          [84, 'async saveLead(lead: Lead) {', ''],
+          [85, '  await this.store.put(lead);', 'good'],
+          [86, '  return this.store.get(lead.id);', 'good'],
+          [87, '}', ''],
+          [88, '// no stale read: write is awaited first', 'good']
+        ],
+        related: [
+          ['lead-cache.service.ts', 'Opened because IndexedDB write/read pattern matched.'],
+          ['lead.model.ts', 'Opened to inspect key field.']
+        ],
+        thought: ['IndexedDB pattern is safe. The write is awaited before the read, so no comment is created.', 'clean'],
+        skip: { text: 'IndexedDB race skipped: write promise is awaited before reading the same store.', tag: 'safe' },
+        metrics: { renders: 43, changeDetectionMs: 119, subscriptionsOpen: 2, domMutations: 282, apiCalls: 6 }
+      },
+      {
+        rule: 'subscription',
+        timeline: ['done', 'Posting Azure comments', 'Only high-confidence, changed-line, non-duplicate findings are posted inline.'],
+        thought: ['Final output: 2 inline comments, 15 lower-confidence notes in PR summary, and multiple skipped checks explained.', 'done'],
+        metrics: { renders: 43, changeDetectionMs: 119, subscriptionsOpen: 2, domMutations: 282, apiCalls: 6 }
+      }
+    ];
+
+    const streamFrames = liveFrames.concat(analysisScope.map((item, index) => makeFileSweepFrame(item, index)));
+
+    function renderLiveFrame(frame) {
+      liveState.activeRule = frame.rule || liveState.activeRule;
+      if (frame.rule) liveState.completedRules.add(frame.rule);
+      if (frame.file) {
+        ensureScopeFile(frame.file, frame.rule);
+        liveState.activeFile = frame.file;
+        liveState.checkedFiles.add(frame.file);
+      }
+      if (frame.timeline) {
+        liveState.currentPhaseTitle = frame.timeline[1];
+        liveState.currentPhaseDetail = frame.timeline[2];
+        if (frame.timeline[1] === 'PR selected') {
+          updateReviewSubtitle(`${frame.timeline[2]} · Angular runtime-aware review · live explainability stream`);
+        }
+        upsertTimeline(frame.timeline);
+        addThought([`${frame.timeline[1]}: ${frame.timeline[2]}`, frame.timeline[0] || 'live']);
+      }
+      if (frame.file) renderFile(frame);
+      if (!frame.file && frame.timeline && analysisScope.length === 0) {
+        renderEmptyFileAnalysis(`${frame.timeline[1]}: ${frame.timeline[2]}`);
+      }
+      if (frame.thought) addThought(frame.thought);
+      if (frame.metrics) liveState.metrics = frame.metrics;
+      if (frame.skip) addSkip(frame.skip);
+      if (frame.comment) addComment(frame.comment);
+      if (frame.markComplete) liveState.completedFiles.add(frame.file);
+      renderRuleBoard();
+      renderScope();
+      renderLiveMetrics();
+      renderSkips();
+      updateHeader();
+      draw();
+      flashPanels();
+    }
+
+    function ensureScopeFile(file, rule = 'live') {
+      if (!analysisScope.some(([knownFile]) => knownFile === file)) {
+        analysisScope.push([file, 'received from backend stream', rule || 'live']);
+      }
+    }
+
+    function renderQueue(files) {
+      analysisScope = (files || []).map((item) => [
+        item.file,
+        item.reason || 'changed file from backend stream',
+        item.rule || ruleForFile(item.file)
+      ]).filter(([file]) => Boolean(file));
+      liveState.fileIndex = 0;
+      liveState.phaseIndex = 0;
+      liveState.displayPhaseIndex = 0;
+      liveState.activeFile = analysisScope[0]?.[0] || '';
+      liveState.currentPhaseTitle = 'Changed file queue ready';
+      liveState.currentPhaseDetail = `${analysisScope.length} changed file(s) are ready for sequential analysis.`;
+      addThought([liveState.currentPhaseDetail, 'queue']);
+      renderScope();
+      updateHeader();
+    }
+
+    function ruleForFile(file) {
+      if (String(file).endsWith('.html')) return 'template';
+      if (String(file).includes('cache')) return 'indexeddb';
+      if (String(file).includes('service')) return 'network';
+      if (String(file).includes('store') || String(file).includes('state')) return 'state';
+      return 'diff';
+    }
+
+    function makeFileSweepFrame(item, index) {
+      const [file, why, rule] = item;
+      const line = 18 + (index % 90);
+      return {
+        rule,
+        timeline: ['running', `Scanning ${shortFile(file)}`, `${why}. Rule pack: ${rule}. Related context and changed-line anchors are checked before any comment.`],
+        file,
+        line,
+        code: codeSampleFor(file, rule, line),
+        related: relatedFor(file, rule),
+        thought: [`Checking ${shortFile(file)} for ${rule} evidence. This file is in the changed-file queue, so it is visible before the AI moves on.`, 'scan'],
+        metrics: {
+          renders: 12 + (index * 3) % 55,
+          changeDetectionMs: 30 + (index * 7) % 130,
+          subscriptionsOpen: rule === 'subscription' ? index % 3 : liveState.metrics.subscriptionsOpen,
+          domMutations: 70 + (index * 19) % 320,
+          apiCalls: 1 + (index % 8),
+        },
+      };
+    }
+
+    function makeSequentialFrame() {
+      if (liveState.fileIndex >= analysisScope.length) {
+        return {
+          rule: 'complete',
+          timeline: ['done', 'Review complete', `${analysisScope.length} changed files completed. No file is reopened unless a later finding needs dependency revalidation.`],
+          thought: ['All changed files were processed once in strict order. Duplicate findings are grouped before Azure posting.', 'done'],
+          metrics: liveState.metrics,
+          finished: true,
+        };
+      }
+
+      const item = analysisScope[liveState.fileIndex];
+      const phase = pipelinePhases[liveState.phaseIndex];
+      const [file, why, rule] = item;
+      const [phaseId, phaseTitle] = phase;
+      liveState.displayPhaseIndex = liveState.phaseIndex;
+      const line = 18 + ((liveState.fileIndex * 7 + liveState.phaseIndex * 3) % 90);
+      const isLastPhase = liveState.phaseIndex === pipelinePhases.length - 1;
+      const frame = {
+        rule,
+        file,
+        line,
+        code: codeSampleFor(file, rule, line),
+        related: phaseId === 'context' || phaseId === 'runtime' || phaseId === 'findings'
+          ? relatedFor(file, rule)
+          : [[shortFile(file), 'Current changed file only. Related files are opened only when this phase needs proof.']],
+        timeline: [isLastPhase ? 'done' : 'running', phaseTitle, `${shortFile(file)}: ${why}. Phase ${liveState.phaseIndex + 1}/${pipelinePhases.length}.`],
+        thought: [thinkingForPhase(file, rule, phaseId), isLastPhase ? 'done' : 'live'],
+        metrics: {
+          renders: 10 + (liveState.fileIndex * 3 + liveState.phaseIndex) % 58,
+          changeDetectionMs: 22 + (liveState.fileIndex * 9 + liveState.phaseIndex * 4) % 140,
+          subscriptionsOpen: rule === 'subscription' && phaseId === 'runtime' ? 1 + (liveState.fileIndex % 2) : Math.max(0, liveState.metrics.subscriptionsOpen || 0),
+          domMutations: 50 + (liveState.fileIndex * 17 + liveState.phaseIndex * 11) % 360,
+          apiCalls: 1 + ((liveState.fileIndex + liveState.phaseIndex) % 9),
+        },
+        markComplete: isLastPhase,
+      };
+
+      if (phaseId === 'findings') {
+        const outcome = findingOutcomeFor(file, rule);
+        if (outcome.comment) frame.comment = outcome.comment;
+        if (outcome.skip) frame.skip = outcome.skip;
+      }
+
+      liveState.phaseIndex++;
+      if (liveState.phaseIndex >= pipelinePhases.length) {
+        liveState.phaseIndex = 0;
+        liveState.fileIndex++;
+      }
+      return frame;
+    }
+
+    function thinkingForPhase(file, rule, phaseId) {
+      const name = shortFile(file);
+      const map = {
+        diff: `Checking changed lines in ${name}. Deleted lines are ignored for inline comments.`,
+        queue: `${name} is now the only active file. Other changed files wait in pending queue.`,
+        ast: `Building TypeScript symbols for ${name}. This catches typing, async, DI, and lifecycle issues.`,
+        template: `Checking Angular template and component state together. This avoids null-check false positives.`,
+        context: `Opening only files needed to understand ${name}. No broad repository scan here.`,
+        runtime: `Running runtime validation only if static evidence needs proof for ${rule}.`,
+        findings: `Creating findings for all issue categories, then dropping low-confidence noise.`,
+        dedup: `Checking if this issue already exists in another file. Only the best location gets a comment.`,
+        stream: `Streaming transparent status for ${name} to the UI.`,
+        complete: `${name} completed. Moving to the next changed file in order.`,
+      };
+      return map[phaseId] || `Checking ${name}.`;
+    }
+
+    function findingOutcomeFor(file, rule) {
+      if (file.endsWith('automation-settings.component.ts')) {
+        return {
+          comment: {
+            type: 'warn',
+            file: shortFile(file),
+            line: 147,
+            confidence: 92,
+            body: 'This subscription is not cleaned up.<br>It can keep running after this component is gone.<br>Please add <span class="mono">takeUntilDestroyed</span> before <span class="mono">subscribe()</span>.',
+            why: 'Static AST found no cleanup. Runtime trace kept 2 subscriptions open after navigation.',
+            duplicates: ['automation-settings.component.ts:73', 'app.component.ts:140 summary-only', 'schedule-assignment.component.ts:675 low confidence'],
+          },
+        };
+      }
+      if (rule === 'null') return { skip: { text: `${shortFile(file)} null issue skipped: guard, resolver, or optional chaining already proves safety.`, tag: 'guarded' } };
+      if (rule === 'trackby') return { skip: { text: `${shortFile(file)} trackBy issue skipped: stable track expression or small list confirmed.`, tag: 'clean' } };
+      if (rule === 'indexeddb') return { skip: { text: `${shortFile(file)} cache race skipped: write is awaited before read.`, tag: 'safe' } };
+      return { skip: { text: `${shortFile(file)} checked for ${rule}. No high-confidence inline comment needed.`, tag: 'checked' } };
+    }
+
+    function codeSampleFor(file, rule, line) {
+      if (file.endsWith('.html')) {
+        if (rule === 'trackby') {
+          return [
+            [line - 2, '@for (row of rows(); track row.id) {', 'good'],
+            [line - 1, '  <app-row [row]="row"></app-row>', 'good'],
+            [line, '} @empty {', ''],
+            [line + 1, '  <p>No data</p>', ''],
+          ];
+        }
+        if (rule === 'null') {
+          return [
+            [line - 2, '<section *ngIf="model as data">', 'good'],
+            [line - 1, '  {{ data.name }}', 'good'],
+            [line, '  {{ data.owner?.fullName }}', 'good'],
+            [line + 1, '</section>', ''],
+          ];
+        }
+        return [
+          [line - 2, '<section class="view">', ''],
+          [line - 1, '  {{ vm.title }}', 'good'],
+          [line, '  <button (click)="save()">Save</button>', ''],
+          [line + 1, '</section>', ''],
+        ];
+      }
+      if (rule === 'subscription') {
+        return [
+          [line - 2, 'ngOnInit() {', ''],
+          [line - 1, '  this.stream$', 'hot'],
+          [line, '    .subscribe(value => this.value = value);', 'bad'],
+          [line + 1, '}', ''],
+        ];
+      }
+      if (rule === 'indexeddb') {
+        return [
+          [line - 2, 'async save(item: Item) {', ''],
+          [line - 1, '  await this.store.put(item);', 'good'],
+          [line, '  return this.store.get(item.id);', 'good'],
+          [line + 1, '}', ''],
+        ];
+      }
+      if (rule === 'network') {
+        return [
+          [line - 2, 'load() {', ''],
+          [line - 1, '  return this.http.get(url);', 'hot'],
+          [line, '}', ''],
+          [line + 1, '// checked for duplicate calls', 'good'],
+        ];
+      }
+      return [
+        [line - 2, 'export class ReviewTarget {', ''],
+        [line - 1, '  readonly state = signal(null);', 'good'],
+        [line, '  readonly vm = computed(() => this.state());', 'good'],
+        [line + 1, '}', ''],
+      ];
+    }
+
+    function relatedFor(file, rule) {
+      const base = shortFile(file);
+      const related = [
+        [base, 'Current changed file under review.'],
+        [`${rule}.evidence`, `Opened to verify ${rule} proof.`],
+        ['diff-map', 'Opened to confirm this line exists in the PR diff.'],
+      ];
+      if (file.endsWith('.ts')) related.push([base.replace('.ts', '.html'), 'Related template checked with TypeScript state.']);
+      if (file.endsWith('.html')) related.push([base.replace('.html', '.ts'), 'Related component checked with template usage.']);
+      return related;
+    }
+
+    function upsertTimeline(step) {
+      const found = timeline.find((item) => item[1] === step[1]);
+      if (found) {
+        found[0] = step[0];
+        found[2] = step[2];
+      } else {
+        timeline.push(step);
+      }
+      renderLists();
+    }
+
+    function renderFile(frame) {
+      document.querySelector('.codebar').textContent = `${frame.file} · line ${frame.line}`;
+      document.querySelector('.code pre').innerHTML = frame.code.map(([line, text, cls]) => (
+        `<div class="line ${cls || ''}"><span class="ln">${line}</span><span>${escapeHtml(text)}</span></div>`
+      )).join('');
+      document.querySelector('.related').innerHTML = frame.related.map(([file, reason]) => (
+        `<div class="mini"><strong>${escapeHtml(file)}</strong><span>${escapeHtml(reason)}</span></div>`
+      )).join('');
+    }
+
+    function renderEmptyFileAnalysis(message) {
+      document.querySelector('.codebar').textContent = 'Waiting for live stream';
+      document.querySelector('.code pre').innerHTML = `
+        <div class="line"><span class="ln">--</span><span>${escapeHtml(message)}</span></div>
+        <div class="line"><span class="ln">--</span><span>No component or file name is shown until backend data arrives.</span></div>`;
+      document.querySelector('.related').innerHTML = `
+        <div class="mini"><strong>No related files yet</strong><span>Related files will appear only after the backend sends analysis events.</span></div>`;
+    }
+
+    function addThought(thought) {
+      liveState.thoughts.unshift(thought);
+      liveState.thoughts = liveState.thoughts.slice(0, 14);
+      document.getElementById('thoughts').innerHTML = liveState.thoughts.map((t) => `
+        <div class="thought"><div class="rail"></div><p>${escapeHtml(t[0])}</p><b class="delta">${escapeHtml(t[1])}</b></div>`).join('');
+    }
+
+    function addSkip(skip) {
+      liveState.skips.unshift(skip);
+      liveState.skips = liveState.skips.slice(0, 8);
+    }
+
+    function addComment(comment) {
+      liveState.comments.unshift(comment);
+      liveState.comments = liveState.comments.slice(0, 4);
+      renderComments();
+    }
+
+    function renderRuleBoard() {
+      const host = document.querySelector('.context .panel-body');
+      let board = document.getElementById('ruleBoard');
+      if (!board) {
+        board = document.createElement('div');
+        board.id = 'ruleBoard';
+        board.className = 'rule-board';
+        host.prepend(board);
+      }
+      board.innerHTML = ruleChecks.map((rule) => {
+        const isActive = rule.id === liveState.activeRule;
+        const status = isActive ? 'active' : liveState.completedRules.has(rule.id) ? 'clean' : rule.state;
+        return `<div class="rule-card ${status}">
+          <b>${rule.name}</b>
+          <span>${isActive ? 'Checking now in live stream.' : liveState.completedRules.has(rule.id) ? 'Checked in this pass.' : rule.text}</span>
+        </div>`;
+      }).join('');
+
+      let categories = document.getElementById('issueCategoryBoard');
+      if (!categories) {
+        categories = document.createElement('div');
+        categories.id = 'issueCategoryBoard';
+        categories.className = 'rule-board';
+        board.after(categories);
+      }
+      categories.innerHTML = issueCategories.map((name) => {
+        const active = categoryMatchesRule(name, liveState.activeRule);
+        return `<div class="rule-card ${active ? 'active' : 'clean'}"><b>${escapeHtml(name)}</b><span>${active ? 'Checking for current file.' : 'Included in full engineering review.'}</span></div>`;
+      }).join('');
+    }
+
+    function categoryMatchesRule(name, rule) {
+      const text = name.toLowerCase();
+      return (rule === 'subscription' && (text.includes('subscription') || text.includes('rxjs') || text.includes('lifecycle') || text.includes('event')))
+        || (rule === 'null' && (text.includes('null') || text.includes('typing') || text.includes('runtime crash')))
+        || (rule === 'trackby' && (text.includes('trackby') || text.includes('dom') || text.includes('rerender')))
+        || (rule === 'template' && (text.includes('template') || text.includes('change detection') || text.includes('onpush') || text.includes('performance')))
+        || (rule === 'indexeddb' && (text.includes('indexeddb') || text.includes('cache') || text.includes('race')))
+        || (rule === 'network' && (text.includes('api') || text.includes('n+1') || text.includes('loading')))
+        || (rule === 'state' && (text.includes('state') || text.includes('store') || text.includes('signal')));
+    }
+
+    function renderScope() {
+      if (!analysisScope.length) {
+        const phase = liveState.currentPhaseTitle || 'Waiting for SSE event';
+        const detail = liveState.currentPhaseDetail || 'Waiting for backend event.';
+        document.getElementById('scopeStrip').innerHTML = `
+          <div class="scope-card">
+            <b>0 files</b>
+            <span>${escapeHtml(detail)}</span>
+          </div>
+          <div class="queue-grid">
+            <div class="file-queue">
+              <div class="queue-row pending"><span>○</span><strong>No PR files loaded</strong><span>waiting</span></div>
+            </div>
+            <div class="phase-list">
+              <div class="phase-chip running">• ${escapeHtml(phase)}</div>
+            </div>
+          </div>`;
+        return;
+      }
+      const completed = analysisScope.filter(([file]) => liveState.completedFiles.has(file)).length;
+      const activeFile = liveState.activeFile;
+      const activeIndex = Math.max(0, analysisScope.findIndex(([file]) => file === activeFile));
+      const pending = analysisScope.filter(([file]) => !liveState.completedFiles.has(file) && file !== activeFile).length;
+      const phaseForUi = liveState.displayPhaseIndex ?? liveState.phaseIndex;
+      const currentPhase = pipelinePhases[phaseForUi] ?? pipelinePhases[pipelinePhases.length - 1];
+      const livePhase = liveState.currentPhaseTitle || currentPhase[1];
+      const liveDetail = liveState.currentPhaseDetail || currentPhase[1];
+      document.getElementById('scopeStrip').innerHTML = `
+        <div class="scope-card">
+          <b>${completed}/${analysisScope.length}</b>
+          <span>current file</span>
+          <b class="scope-file">${escapeHtml(shortFile(activeFile))}</b>
+          <span>${pending} pending · step: ${escapeHtml(livePhase)}</span>
+          <span>${escapeHtml(liveDetail)}</span>
+        </div>
+        <div class="queue-grid">
+          <div class="file-queue">${analysisScope.map(([file, why, rule], index) => {
+          const state = liveState.completedFiles.has(file) ? 'done' : file === activeFile ? 'running' : 'pending';
+            const icon = state === 'done' ? '✓' : state === 'running' ? '•' : index + 1;
+            return `<div class="queue-row ${state}"><span>${icon}</span><strong>${escapeHtml(shortFile(file))}</strong><span>${escapeHtml(rule)}</span></div>`;
+          }).join('')}</div>
+          <div class="phase-list">${pipelinePhases.map(([id, label], index) => {
+            const state = index < phaseForUi ? 'done' : index === phaseForUi ? 'running' : '';
+            return `<div class="phase-chip ${state}">${state === 'done' ? '✓' : state === 'running' ? '•' : '○'} ${escapeHtml(label)}</div>`;
+          }).join('')}</div>
+        </div>`;
+    }
+
+    function renderLiveMetrics() {
+      const entries = [
+        [liveState.metrics.renders, 'renders'],
+        [`${liveState.metrics.changeDetectionMs}ms`, 'change detection'],
+        [liveState.metrics.subscriptionsOpen, 'open subscriptions'],
+        [liveState.metrics.domMutations, 'DOM mutations'],
+        [liveState.metrics.apiCalls, 'API calls']
+      ];
+      document.getElementById('metrics').innerHTML = entries.map((m) => `
+        <div class="metric"><b>${m[0]}</b><span>${m[1]}</span></div>`).join('');
+      repaintHeatmap(liveState.metrics.domMutations || 0);
+    }
+
+    function renderComments() {
+      const host = document.querySelector('.comments .panel-body');
+      const commentsHtml = liveState.comments.map((c) => `
+        <div class="comment ${c.type || 'warn'}">
+          <div class="pill">${escapeHtml(c.file)}:${c.line}</div>
+          <p class="comment-text">${c.body}</p>
+          <div class="confidence"><div style="width:${c.confidence}%"></div></div>
+          <p class="why">${c.confidence}% confidence. ${escapeHtml(c.why)}</p>
+        </div>`).join('');
+      const duplicates = liveState.comments[0]?.duplicates || ['No duplicate group yet.'];
+      host.innerHTML = `${commentsHtml || '<div class="comment info"><div class="pill">waiting</div><p class="comment-text">No inline comment approved yet. AI is still checking proof.</p></div>'}
+        <div class="duplicate-list">${duplicates.map((d) => `<div class="row"><span>${escapeHtml(d)}</span><b class="tag">grouped</b></div>`).join('')}</div>`;
+    }
+
+    function renderSkips() {
+      document.querySelector('.skip-list').innerHTML = liveState.skips.map((skip) => (
+        `<div class="row"><span>${escapeHtml(skip.text)}</span><b class="tag">${escapeHtml(skip.tag)}</b></div>`
+      )).join('');
+    }
+
+    function updateHeader() {
+      const posted = liveState.comments.length;
+      const status = streamStatusMeta();
+      const progress = analysisScope.length
+        ? `${liveState.completedFiles.size}/${analysisScope.length} completed · ${posted} inline · ${liveState.skips.length} skips`
+        : `0 files loaded · ${posted} inline · ${liveState.skips.length} skips`;
+      document.querySelector('.status-strip').innerHTML = `
+        <div class="pill"><span class="dot ${status.dot}"></span>${status.label}</div>
+        <div class="pill">${status.detail}</div>
+        <div class="pill">${progress}</div>`;
+    }
+
+    function streamStatusMeta() {
+      const fileLabel = analysisScope.length
+        ? `file ${Math.min(liveState.fileIndex + 1, analysisScope.length)}/${analysisScope.length} · ${liveState.currentPhaseTitle || `phase ${(liveState.displayPhaseIndex ?? liveState.phaseIndex) + 1}/${pipelinePhases.length}`}`
+        : liveState.currentPhaseTitle || 'waiting for changed-file queue';
+      if (liveState.streamStatus === 'connected') return { dot: '', label: 'Live SSE connected', detail: fileLabel };
+      if (liveState.streamStatus === 'demo') return { dot: 'demo', label: 'Demo stream running', detail: fileLabel };
+      if (liveState.streamStatus === 'complete') return { dot: '', label: 'Review complete', detail: `${analysisScope.length}/${analysisScope.length} files processed` };
+      if (liveState.streamStatus === 'offline') return { dot: 'offline', label: 'Live server disconnected', detail: 'UI stopped. No fake fallback.' };
+      return { dot: 'idle', label: 'Connecting to live review', detail: liveState.streamMessage || 'Waiting for SSE' };
+    }
+
+    function repaintHeatmap(seed) {
+      const colors = ['rgba(53,208,255,.13)','rgba(110,243,165,.18)','rgba(255,209,102,.24)','rgba(255,107,154,.30)'];
+      document.getElementById('heatmap').innerHTML = Array.from({ length: 96 }, (_, i) => (
+        `<div class="cell" style="background:${colors[(i + seed + Math.floor(i / 7)) % colors.length]}"></div>`
+      )).join('');
+    }
+
+    function flashPanels() {
+      document.querySelectorAll('.panel').forEach((panel) => {
+        panel.classList.remove('stream-flash');
+        void panel.offsetWidth;
+        panel.classList.add('stream-flash');
+      });
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[ch]));
+    }
+
+    function shortFile(file) {
+      return String(file).split('/').pop() || String(file);
+    }
+
+    function updateReviewSubtitle(text) {
+      document.querySelector('.sub').textContent = text;
+    }
+
+    function renderIdleUi(message, status = 'connecting') {
+      updateReviewSubtitle('No PR selected · Angular runtime-aware review · live explainability stream');
+      liveState.streamStatus = status;
+      liveState.streamMessage = message;
+      liveState.currentPhaseTitle = status === 'offline' ? 'Live stream disconnected' : 'Waiting for live review';
+      liveState.currentPhaseDetail = message;
+      analysisScope = [];
+      liveState.activeFile = '';
+      liveState.comments = [];
+      liveState.skips = [];
+      liveState.checkedFiles.clear();
+      liveState.completedRules.clear();
+      liveState.completedFiles.clear();
+      liveState.fileIndex = 0;
+      liveState.phaseIndex = 0;
+      liveState.displayPhaseIndex = 0;
+      window.reviewGraphMode = 'idle';
+      timeline.length = 0;
+      timeline.push(
+        [status === 'offline' ? 'skipped' : 'running', status === 'offline' ? 'Live stream disconnected' : 'Waiting for live review', message],
+        ['pending', 'PR diff parsing', 'Waiting for backend event.'],
+        ['pending', 'Queue changed files', 'Waiting for backend event.']
+      );
+      thoughts.length = 0;
+      thoughts.push([message, status === 'offline' ? 'offline' : 'wait']);
+      liveState.thoughts = thoughts.slice();
+      renderLists();
+      renderRuleBoard();
+      renderScope();
+      renderEmptyFileAnalysis(message);
+      renderComments();
+      renderLiveMetrics();
+      renderSkips();
+      updateHeader();
+      draw();
+    }
+
+    function startLocalStream() {
+      if (localStreamTimer) clearInterval(localStreamTimer);
+      if (activeEventSource) activeEventSource.close();
+      liveState.streamMode = 'demo';
+      liveState.streamStatus = 'demo';
+      liveState.streamMessage = 'Local demo stream is running because ?demo=1 was provided.';
+      analysisScope = demoAnalysisScope.slice();
+      liveState.activeFile = analysisScope[0][0];
+      liveState.comments = [];
+      liveState.skips = demoSkips.slice();
+      liveState.checkedFiles.clear();
+      liveState.completedRules.clear();
+      liveState.completedFiles.clear();
+      liveState.fileIndex = 0;
+      liveState.phaseIndex = 0;
+      liveState.displayPhaseIndex = 0;
+      window.reviewGraphMode = 'demo';
+      renderRuleBoard();
+      renderScope();
+      renderComments();
+      renderLiveMetrics();
+      renderSkips();
+      addThought(['Demo mode is using local sample events. Real Azure data is not connected.', 'demo']);
+      updateHeader();
+      localStreamTimer = setInterval(() => {
+        const frame = makeSequentialFrame();
+        renderLiveFrame(frame);
+        liveState.pointer++;
+        if (frame.finished) {
+          clearInterval(localStreamTimer);
+          localStreamTimer = null;
+          liveState.streamStatus = 'complete';
+          updateHeader();
+        }
+      }, 850);
+    }
+
+    function streamUrlFromPage() {
+      const params = new URLSearchParams(location.search);
+      if (params.get('events')) return params.get('events');
+      const jobId = params.get('jobId') || 'demo';
+      const port = params.get('port') || '8081';
+      if (location.protocol === 'file:') return `http://localhost:${port}/api/reviews/${encodeURIComponent(jobId)}/events`;
+      const apiBase = params.get('api');
+      if (apiBase) return `${apiBase.replace(/\/$/, '')}/api/reviews/${encodeURIComponent(jobId)}/events`;
+      return `/api/reviews/${encodeURIComponent(jobId)}/events`;
+    }
+
+    function bootLiveStream() {
+      const params = new URLSearchParams(location.search);
+      if (params.get('demo') === '1') {
+        startLocalStream();
+        return;
+      }
+      renderIdleUi('Waiting for backend SSE. Open through the app server or pass ?events=<sse-url>. Use ?demo=1 only for sample data.');
+      const streamUrl = streamUrlFromPage();
+      if (!streamUrl) {
+        renderIdleUi('This file is open directly from disk. No live server is connected, so the review is paused.', 'offline');
+        return;
+      }
+      try {
+        liveState.streamMode = 'live';
+        liveState.streamStatus = 'connecting';
+        liveState.streamMessage = `Connecting to ${streamUrl}`;
+        updateHeader();
+        const stream = new EventSource(streamUrl);
+        activeEventSource = stream;
+        let received = false;
+        let finished = false;
+        stream.onopen = () => {
+          liveState.streamStatus = 'connected';
+          liveState.streamMessage = 'Live SSE connected.';
+          addThought(['Connected to backend SSE. UI will only move when server sends events.', 'live']);
+          updateHeader();
+        };
+        stream.addEventListener('connected', () => {
+          received = true;
+          liveState.streamStatus = 'connected';
+          addThought(['Backend review stream is connected. Waiting for analysis events.', 'live']);
+          updateHeader();
+        });
+        stream.addEventListener('complete', (e) => {
+          received = true;
+          finished = true;
+          const data = JSON.parse(e.data);
+          upsertTimeline(['done', data.title || 'Review complete', 'Backend stream completed.']);
+          addThought(['Review stream completed.', 'done']);
+          liveState.streamStatus = 'complete';
+          updateHeader();
+        });
+        stream.addEventListener('timeline', (e) => {
+          received = true;
+          const data = JSON.parse(e.data);
+          renderLiveFrame({ rule: data.rule || 'diff', timeline: [data.status, data.title, data.detail] });
+        });
+        stream.addEventListener('queue', (e) => {
+          received = true;
+          const data = JSON.parse(e.data);
+          renderQueue(data.files || []);
+        });
+        stream.addEventListener('file', (e) => {
+          received = true;
+          const data = JSON.parse(e.data);
+          renderLiveFrame({
+            rule: data.rule || 'diff',
+            file: data.file,
+            line: data.line || 1,
+            code: data.code || liveFrames[0].code,
+            related: (data.related || []).map((r) => [r.file, r.reason])
+          });
+        });
+        stream.addEventListener('reasoning', (e) => {
+          received = true;
+          const data = JSON.parse(e.data);
+          renderLiveFrame({ rule: data.rule || liveState.activeRule, thought: [data.detail, data.confidenceDelta ? `+${Math.round(data.confidenceDelta * 100)}%` : 'info'] });
+        });
+        stream.addEventListener('runtime', (e) => {
+          received = true;
+          const data = JSON.parse(e.data);
+          renderLiveFrame({ rule: data.rule || liveState.activeRule, metrics: data.metrics });
+        });
+        stream.addEventListener('skip', (e) => {
+          received = true;
+          const data = JSON.parse(e.data);
+          renderLiveFrame({ rule: data.rule || liveState.activeRule, skip: { text: data.reason, tag: data.tag || 'skipped' }, thought: [data.reason, data.tag || 'skip'] });
+        });
+        stream.addEventListener('comment', (e) => {
+          received = true;
+          const data = JSON.parse(e.data);
+          renderLiveFrame({
+            rule: data.rule || 'subscription',
+            comment: {
+              type: data.severity || 'warn',
+              file: data.file,
+              line: data.line,
+              confidence: Math.round(data.confidence * 100),
+              body: escapeHtml(data.body || data.title),
+              why: data.reason,
+              duplicates: data.duplicates || []
+            }
+          });
+        });
+        stream.onerror = () => {
+          if (finished) return;
+          stream.close();
+          activeEventSource = null;
+          liveState.streamMode = 'offline';
+          liveState.streamStatus = 'offline';
+          liveState.streamMessage = received
+            ? 'Backend stream stopped. UI is paused and will not use demo data.'
+            : 'Backend stream was not found. Retrying the real SSE connection.';
+          upsertTimeline(['skipped', 'Live stream disconnected', liveState.streamMessage]);
+          addThought([liveState.streamMessage, 'offline']);
+          updateHeader();
+          setTimeout(bootLiveStream, 2500);
+        };
+      } catch {
+        renderIdleUi('Could not open SSE stream. UI is paused and will not use demo data.', 'offline');
+      }
+    }
+
+    setTimeout(bootLiveStream, 250);
+  </script>
+</body>
+</html>

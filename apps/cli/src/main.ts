@@ -8,6 +8,13 @@ import kleur from 'kleur';
 import { parsePrInput, type ParseDefaults } from './parse-url.js';
 import { reviewOnePr } from './review.js';
 import { findRepoRoot } from './paths.js';
+import {
+  ensureReviewUi,
+  publishReviewUiEvent,
+  resetReviewUi,
+  stopReviewUi,
+  type ReviewUiHandle,
+} from './review-ui.js';
 
 // Load .env from the repo root, regardless of which directory we were started in.
 // pnpm filter starts the CLI with cwd = apps/cli, so a bare `dotenv/config` would
@@ -15,6 +22,16 @@ import { findRepoRoot } from './paths.js';
 const envPath = path.join(findRepoRoot(), '.env');
 if (fs.existsSync(envPath)) dotenv.config({ path: envPath });
 else dotenv.config();
+
+let activeReviewUi: ReviewUiHandle | undefined;
+process.once('SIGINT', () => {
+  stopReviewUi(activeReviewUi);
+  process.exit(130);
+});
+process.once('SIGTERM', () => {
+  stopReviewUi(activeReviewUi);
+  process.exit(143);
+});
 
 /**
  * Interactive CLI server.
@@ -25,6 +42,8 @@ else dotenv.config();
 async function main() {
   banner();
   validateEnv();
+  activeReviewUi = await ensureReviewUi();
+  await resetReviewUi(activeReviewUi);
 
   const rl = readline.createInterface({ input: stdin, output: stdout, terminal: true });
   const defaults: ParseDefaults = {};
@@ -59,13 +78,37 @@ async function main() {
         kleur.dim(`\n→ ${parsed.organization} / ${parsed.project} / ${parsed.repo}  #${parsed.pullRequestId}\n`),
       );
 
+      await resetReviewUi(activeReviewUi);
+      await publishReviewUiEvent(activeReviewUi, {
+        type: 'timeline',
+        title: 'PR selected',
+        detail: `${parsed.organization} / ${parsed.project} / ${parsed.repo} #${parsed.pullRequestId}`,
+        status: 'done',
+        rule: 'diff',
+      });
+      await publishReviewUiEvent(activeReviewUi, {
+        type: 'reasoning',
+        title: 'Review started',
+        detail: 'PR is selected. The UI will now show only events from this review.',
+        rule: 'diff',
+      });
+
       const t0 = Date.now();
       let result;
       try {
-        result = await reviewOnePr(parsed);
+        result = await reviewOnePr(parsed, {
+          onUiEvent: (event) => publishReviewUiEvent(activeReviewUi, event),
+        });
       } catch (err) {
         const e = err as Error;
         console.log(kleur.red(`✗ Review failed: ${e.message}`));
+        await publishReviewUiEvent(activeReviewUi, {
+          type: 'timeline',
+          title: 'Review failed',
+          detail: e.message,
+          status: 'skipped',
+          rule: 'diff',
+        });
         if (process.env['LOG_LEVEL'] === 'debug') console.error(e.stack);
         continue;
       }
@@ -101,6 +144,8 @@ async function main() {
     }
   } finally {
     rl.close();
+    stopReviewUi(activeReviewUi);
+    activeReviewUi = undefined;
     console.log(kleur.dim('\nbye'));
   }
 }

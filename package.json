@@ -15,6 +15,7 @@
     "test": "pnpm -r run test",
     "typecheck": "tsc -b --noEmit",
     "start": "pnpm --filter @abid/cli dev",
+    "dev:api": "pnpm --filter @abid/api dev",
     "dev:cli": "pnpm --filter @abid/cli dev",
     "dev:gateway": "pnpm --filter @abid/webhook-gateway dev",
     "dev:orchestrator": "pnpm --filter @abid/orchestrator dev",

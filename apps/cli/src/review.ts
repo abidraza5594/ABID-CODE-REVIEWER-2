@@ -5,7 +5,7 @@ import { simpleGit } from 'simple-git';
 import kleur from 'kleur';
 import type { Finding } from '@abid/core';
 import { ulid } from '@abid/core';
-import { DiffIndex, parseUnifiedDiff } from '@abid/git-diff-engine';
+import { DiffIndex, parseUnifiedDiff, type FileDiff } from '@abid/git-diff-engine';
 import { AstProject } from '@abid/ast-engine';
 import { buildContext } from '@abid/repo-context-engine';
 import { ALL_RULES, runAnalyzer } from '@abid/angular-analyzer';
@@ -21,6 +21,7 @@ import {
 import type { ParsedPr } from './parse-url.js';
 import { renderFindings } from './render.js';
 import { findRepoRoot } from './paths.js';
+import type { ReviewUiEventInput } from './review-ui.js';
 
 export interface ReviewOutput {
   findings: Finding[];
@@ -37,6 +38,10 @@ export interface PostSummary {
   failed: Array<{ file: string; line: number; error: string }>;
 }
 
+export interface ReviewHooks {
+  onUiEvent?: (event: ReviewUiEventInput) => void | Promise<void>;
+}
+
 /**
  * Full single-PR review pipeline for the CLI. Same engines as the
  * orchestrator app, but skips Redis-based queueing and runtime-runner —
@@ -50,20 +55,24 @@ export interface PostSummary {
  *   5. Run analyzer, score, LLM-filter, dedup, voice-rewrite.
  *   6. Return findings + a `postNow()` thunk the caller invokes on user confirmation.
  */
-export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
+export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promise<ReviewOutput> {
+  const ui = (event: ReviewUiEventInput) => Promise.resolve(hooks.onUiEvent?.(event)).catch(() => undefined);
   const ado = new AdoClient({
     organizationUrl: `https://dev.azure.com/${pr.organization}`,
     pat: requiredEnv('ABID_ADO_PAT'),
   });
 
   step('Fetching PR details from Azure DevOps');
+  await ui({ type: 'timeline', title: 'Fetching PR details from Azure DevOps', detail: 'Reading PR source and target commits.', status: 'running', rule: 'diff' });
   const prDetails = await fetchPrDetails(ado, pr);
 
   step('Cloning repo (this is the slow step — first time)');
+  await ui({ type: 'timeline', title: 'Cloning repo', detail: 'Preparing source checkout for this selected PR.', status: 'running', rule: 'diff' });
   const workdir = await cloneRepo(pr, prDetails.sourceSha, prDetails.baseSha);
 
   try {
     step('Fetching unified diff');
+    await ui({ type: 'timeline', title: 'Fetching unified diff', detail: 'Mapping changed files and new-line anchors.', status: 'running', rule: 'diff' });
     const diffText = await fetchUnifiedDiff(pr, prDetails);
     const diff = new DiffIndex(parseUnifiedDiff(diffText));
     const filesCount = [...diff.files()].length;
@@ -71,8 +80,35 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
       return emptyResult(`PR has no analyzable file changes.`);
     }
     detail(`${filesCount} file(s) changed`);
+    await ui({ type: 'timeline', title: 'Parsing changed files', detail: `${filesCount} file(s) changed in this PR.`, status: 'done', rule: 'diff' });
+    const changedFiles = [...diff.files()].filter((file) => !file.binary && file.status !== 'deleted');
+    await ui({
+      type: 'queue',
+      title: 'Changed file queue ready',
+      files: changedFiles.map((file) => ({
+        file: file.newPath,
+        reason: `${file.status} file from selected PR diff`,
+        rule: ruleForPath(file.newPath),
+      })),
+    });
+    const firstChangedFile = changedFiles[0];
+    if (firstChangedFile) {
+      await ui({
+        type: 'file',
+        title: 'Current changed file',
+        file: firstChangedFile.newPath,
+        line: firstChangedLine(firstChangedFile),
+        rule: ruleForPath(firstChangedFile.newPath),
+        code: diffFileToCodeRows(firstChangedFile),
+        related: [
+          { file: firstChangedFile.newPath, reason: 'First changed file from the selected PR diff.' },
+          { file: 'diff-map', reason: 'Opened to map exact changed lines for Azure comments.' },
+        ],
+      });
+    }
 
     step('Building TypeScript + Angular AST');
+    await ui({ type: 'timeline', title: 'Building TypeScript + Angular AST', detail: 'Building repository symbols, components, templates, and imports.', status: 'running', rule: 'template' });
     const project = new AstProject(workdir);
     const context = await buildContext(project, prDetails.sourceSha);
     detail(`${context.components.length} component(s) built in ${context.buildMs}ms`);
@@ -82,8 +118,10 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
       return c.templates.some((t) => diff.fileByNewPath(t.file));
     });
     detail(`${changedComponents.length} changed component(s) in scope`);
+    await ui({ type: 'timeline', title: 'Building repository graph', detail: `${context.components.length} component(s) built. ${changedComponents.length} changed component(s) in scope.`, status: 'done', rule: 'template' });
 
     step('Running Angular rule pack');
+    await ui({ type: 'timeline', title: 'Running Angular rule pack', detail: 'Checking enabled engineering issue categories for changed files.', status: 'running', rule: 'template' });
     const jobId = ulid();
     let findings = runAnalyzer(
       {
@@ -97,8 +135,10 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
       { preFilterFloor: 0.4 },
     );
     detail(`${findings.length} raw finding(s)`);
+    await ui({ type: 'timeline', title: 'Running Angular rule pack', detail: `${findings.length} raw finding(s) found before scoring.`, status: 'done', rule: 'template' });
 
     if (findings.length === 0) {
+      await ui({ type: 'complete', title: 'Review complete' });
       return {
         findings: [],
         renderedFindings: renderFindings([]),
@@ -108,6 +148,7 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
     }
 
     step('Scoring findings');
+    await ui({ type: 'timeline', title: 'Scoring findings', detail: 'Confidence engine is ranking evidence and guarantees.', status: 'running', rule: 'diff' });
     findings = findings.map((f) =>
       applyScore(f, { rulePrecision: rulePrecisionOf(f.ruleId), evidence: f.evidence, guarantees: f.guarantees }),
     );
@@ -125,9 +166,38 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
     const prompts = new PromptLoader(promptsDir);
 
     step(`Asking Mistral to filter false positives (${findings.length} call(s))`);
+    await ui({ type: 'timeline', title: 'Asking Mistral to filter false positives', detail: `${findings.length} finding(s) are being checked for false positives.`, status: 'running', rule: 'diff' });
+    let filteredCount = 0;
+    const filterStartedAt = Date.now();
+    const filterHeartbeat = setInterval(() => {
+      const seconds = Math.round((Date.now() - filterStartedAt) / 1000);
+      void ui({
+        type: 'timeline',
+        title: `Mistral filter progress ${filteredCount}/${findings.length}`,
+        detail: `${filteredCount}/${findings.length} complete after ${seconds}s. Still waiting for Mistral responses.`,
+        status: 'running',
+        rule: 'diff',
+      });
+    }, 10_000);
     findings = await Promise.all(
-      findings.map(async (f) => {
-        if (classify(f.ruleId, f.confidence) === 'drop') return f;
+      findings.map(async (f, index) => {
+        const label = `${f.location.file}:${f.location.startLine}`;
+        if (classify(f.ruleId, f.confidence) === 'drop') {
+          filteredCount++;
+          await ui({
+            type: 'reasoning',
+            title: `Mistral filter ${filteredCount}/${findings.length}`,
+            detail: `${label} skipped before LLM because confidence is below drop floor.`,
+            rule: f.ruleId,
+          });
+          return f;
+        }
+        await ui({
+          type: 'reasoning',
+          title: `Mistral filter ${index + 1}/${findings.length}`,
+          detail: `Checking false-positive proof for ${label}.`,
+          rule: f.ruleId,
+        });
         const snippet = await readSnippet(workdir, f.location.file, f.location.startLine, 12);
         try {
           const filter = await filterFinding(f, { file: f.location.file, snippet }, { mistral, prompts });
@@ -138,16 +208,36 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
             llmAgreement: filter.agreement,
           });
           scored.notes = `LLM filter: agreement=${filter.agreement.toFixed(2)} — ${filter.reason}`;
+          filteredCount++;
+          await ui({
+            type: 'timeline',
+            title: `Mistral filter progress ${filteredCount}/${findings.length}`,
+            detail: `${label}: agreement ${filter.agreement.toFixed(2)}. ${filter.reason}`,
+            status: filteredCount === findings.length ? 'done' : 'running',
+            rule: f.ruleId,
+          });
           return scored;
         } catch (err) {
           // If Mistral fails for one finding, keep the unfiltered score; don't drop.
           detail(kleur.yellow(`! filter failed for ${f.ruleId}: ${(err as Error).message.slice(0, 80)}`));
+          filteredCount++;
+          await ui({
+            type: 'timeline',
+            title: `Mistral filter progress ${filteredCount}/${findings.length}`,
+            detail: `${label}: filter failed, keeping static score. ${(err as Error).message.slice(0, 120)}`,
+            status: filteredCount === findings.length ? 'done' : 'running',
+            rule: f.ruleId,
+          });
           return f;
         }
       }),
     );
+    clearInterval(filterHeartbeat);
+
+    await ui({ type: 'timeline', title: 'Mistral filter complete', detail: `${findings.length} finding(s) checked for false positives.`, status: 'done', rule: 'diff' });
 
     step('Dedup + clustering');
+    await ui({ type: 'timeline', title: 'Dedup + clustering', detail: 'Grouping duplicate findings so only the best location gets a comment.', status: 'running', rule: 'diff' });
     const dedup = await dedupFindings(findings, new FakeEmbedClient(), context.imports);
     findings = dedup.outFindings;
 
@@ -168,6 +258,7 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
 
     const toRewrite = findings.filter((f) => f.stage === 'clustered');
     step(`Voice rewrite (${toRewrite.length} comment(s))`);
+    await ui({ type: 'timeline', title: 'Voice rewrite', detail: `${toRewrite.length} comment(s) are being rewritten in simple English.`, status: 'running', rule: 'diff' });
     for (const f of toRewrite) {
       try {
         const r = await rewriteFinding(f, { mistral, prompts });
@@ -190,6 +281,9 @@ export async function reviewOnePr(pr: ParsedPr): Promise<ReviewOutput> {
     const postable = findings.filter((f) => f.stage === 'rewritten');
     const summarized = findings.filter((f) => f.stage === 'summarized');
     const dropped = findings.filter((f) => f.stage === 'dropped');
+    await publishFindingPreview(ui, workdir, findings);
+    await ui({ type: 'timeline', title: 'Review complete', detail: `${postable.length} inline comment(s), ${summarized.length} summary-only, ${dropped.length} dropped.`, status: 'done', rule: 'diff' });
+    await ui({ type: 'complete', title: 'Review complete' });
 
     return {
       findings,
@@ -333,6 +427,106 @@ function emptyResult(message: string): ReviewOutput {
     summaryLine: '',
     postNow: async () => emptyPostSummary(),
   };
+}
+
+async function publishFindingPreview(
+  ui: (event: ReviewUiEventInput) => Promise<void | undefined>,
+  workdir: string,
+  findings: Finding[],
+) {
+  const primary =
+    findings.find((f) => f.stage === 'rewritten') ??
+    findings.find((f) => f.stage === 'summarized') ??
+    findings.find((f) => f.stage === 'dropped');
+
+  if (primary) {
+    const snippet = await readSnippet(workdir, primary.location.file, primary.location.startLine, 6);
+    await ui({
+      type: 'file',
+      title: 'Primary review target',
+      file: primary.location.file,
+      line: primary.location.startLine,
+      rule: primary.ruleId,
+      code: snippetToCodeRows(snippet, primary.location.startLine),
+      related: [
+        { file: primary.location.file, reason: 'Changed file selected by the review pipeline.' },
+        ...(primary.siblings ?? []).slice(0, 4).map((s) => ({
+          file: `${s.file}:${s.line}`,
+          reason: 'Duplicate or related location grouped with this finding.',
+        })),
+      ],
+    });
+  }
+
+  for (const finding of findings.filter((f) => f.stage === 'rewritten').slice(0, 6)) {
+    await ui({
+      type: 'comment',
+      title: finding.message.title,
+      file: finding.location.file,
+      line: finding.location.startLine,
+      confidence: finding.confidence,
+      rule: finding.ruleId,
+      severity: finding.severity === 'info' ? 'info' : 'warn',
+      body: finding.message.body || finding.message.title,
+      duplicates: (finding.siblings ?? []).map((s) => `${s.file}:${s.line}`),
+      reason: finding.notes ?? 'Confidence passed the inline comment gate.',
+    });
+  }
+
+  for (const finding of findings.filter((f) => f.stage === 'summarized' || f.stage === 'dropped').slice(0, 10)) {
+    await ui({
+      type: 'skip',
+      title: finding.message.title,
+      rule: finding.ruleId,
+      reason: `${finding.location.file}:${finding.location.startLine} stayed out of inline comments. ${finding.dispositionReason ?? 'Confidence gate did not pass.'}`,
+      tag: finding.stage,
+    });
+  }
+}
+
+function snippetToCodeRows(snippet: string, targetLine: number): Array<[number, string, string?]> {
+  const rows = snippet
+    .split('\n')
+    .map((line): [number, string, string?] | undefined => {
+      const match = /^(\d+):\s?(.*)$/.exec(line);
+      if (!match) return undefined;
+      const lineNumber = Number(match[1]);
+      const text = match[2] ?? '';
+      return lineNumber === targetLine ? [lineNumber, text, 'bad'] : [lineNumber, text];
+    })
+    .filter((row): row is [number, string, string?] => Boolean(row));
+
+  return rows.length > 0 ? rows : [[targetLine, 'Target line is in this changed file.', 'bad']];
+}
+
+function firstChangedLine(file: FileDiff): number {
+  for (const hunk of file.hunks) {
+    for (const line of hunk.lines) {
+      if (line.newLine !== null && line.intent !== 'removed') return line.newLine;
+    }
+  }
+  return 1;
+}
+
+function diffFileToCodeRows(file: FileDiff): Array<[number, string, string?]> {
+  const rows: Array<[number, string, string?]> = [];
+  for (const hunk of file.hunks.slice(0, 2)) {
+    for (const line of hunk.lines) {
+      if (line.newLine === null) continue;
+      const cls = line.intent === 'added' ? 'good' : line.intent === 'context' ? '' : 'bad';
+      rows.push(cls ? [line.newLine, line.text, cls] : [line.newLine, line.text]);
+      if (rows.length >= 16) return rows;
+    }
+  }
+  return rows.length > 0 ? rows : [[1, 'Changed file loaded from PR diff.', 'good']];
+}
+
+function ruleForPath(file: string): string {
+  if (file.endsWith('.html')) return 'template';
+  if (file.includes('cache') || file.toLowerCase().includes('indexeddb')) return 'indexeddb';
+  if (file.includes('service')) return 'network';
+  if (file.includes('store') || file.includes('state')) return 'state';
+  return 'diff';
 }
 
 function emptyPostSummary(): PostSummary {
