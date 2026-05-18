@@ -16,7 +16,7 @@ import {
   runAnalyzer,
   type RunOptions,
 } from '@abid/angular-analyzer';
-import { applyScore, classify } from '@abid/confidence-engine';
+import { applyScore, buildExactSuggestion, classify, decideReviewAction } from '@abid/confidence-engine';
 import { dedupFindings, FakeEmbedClient } from '@abid/deduplication-engine';
 import { AdoClient, postFinding } from '@abid/azure-devops';
 import {
@@ -272,20 +272,26 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
     findings = dedup.outFindings;
 
     // After dedup, every anchor is at stage='clustered'. Translate to its final
-    // disposition based on confidence so the renderer can show an honest preview.
+    // review interaction based on confidence, exact location, and safe auto-fix proof.
     for (const f of findings) {
       if (f.stage !== 'clustered') continue;
-      const d = classify(f.ruleId, f.confidence);
-      if (d === 'drop') {
+      const disposition = classify(f.ruleId, f.confidence);
+      const exactAddedLine = isExactAddedLine(f, diff);
+      const hasExactAutoFix = exactAddedLine ? await prepareExactSuggestion(workdir, f) : false;
+      f.review = decideReviewAction(f, { disposition, exactAddedLine, hasExactAutoFix });
+
+      if (disposition === 'drop') {
         f.stage = 'dropped';
         f.dispositionReason = 'below-confidence-floor';
-      } else if (d === 'summarize') {
+        f.notes = f.review.rationale;
+      } else if (!f.review.postInline) {
         f.stage = 'summarized';
-        f.dispositionReason = 'below-confidence-floor';
-      } else if (!isExactAddedLine(f, diff)) {
-        f.stage = 'summarized';
-        f.dispositionReason = 'not-on-added-line';
-        f.notes = 'Summary only: finding is not anchored to the exact added statement in this PR.';
+        f.dispositionReason = !exactAddedLine
+          ? 'not-on-added-line'
+          : f.review.requiresManualReview
+            ? 'manual-review-required'
+            : 'informational';
+        f.notes = f.review.rationale;
       }
       // 'post' stays as 'clustered' until voice-rewrite promotes it to 'rewritten'.
     }
@@ -295,6 +301,9 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
     await ui({ type: 'timeline', title: 'Voice rewrite', detail: `${toRewrite.length} comment(s) are being rewritten in simple English.`, status: 'running', rule: 'diff' });
     for (const f of toRewrite) {
       try {
+        const exactSuggestion = f.review?.suggestionPresentation === 'azure-suggestion'
+          ? f.message.suggestion
+          : undefined;
         const r = await rewriteFinding(f, { mistral, prompts });
         if (!r.ok) {
           f.stage = 'dropped';
@@ -303,7 +312,8 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
         }
         f.message.title = r.title ?? f.message.title;
         f.message.body = r.body ?? '';
-        if (r.suggestion) f.message.suggestion = r.suggestion;
+        if (r.suggestion && f.review?.suggestionPresentation !== 'azure-suggestion') f.message.suggestion = r.suggestion;
+        if (exactSuggestion !== undefined) f.message.suggestion = exactSuggestion;
         f.stage = 'rewritten';
       } catch (err) {
         detail(kleur.yellow(`! voice rewrite failed for ${f.ruleId}: ${(err as Error).message.slice(0, 80)}`));
@@ -452,6 +462,32 @@ async function readSnippet(workdir: string, file: string, line: number, radius: 
   } catch {
     return '';
   }
+}
+
+async function prepareExactSuggestion(workdir: string, finding: Finding): Promise<boolean> {
+  const targetText = await readLocationText(workdir, finding);
+  if (!targetText) return false;
+  const exact = buildExactSuggestion(finding, targetText);
+  if (!exact.ok) return false;
+  finding.message.suggestion = exact.suggestion;
+  finding.notes = appendNote(finding.notes, `Auto-fix proof: ${exact.reason}.`);
+  return true;
+}
+
+async function readLocationText(workdir: string, finding: Finding): Promise<string> {
+  try {
+    const full = await fs.readFile(path.join(workdir, finding.location.file), 'utf8');
+    const lines = full.split(/\r?\n/);
+    const start = Math.max(0, finding.location.startLine - 1);
+    const end = Math.max(start, (finding.location.endLine ?? finding.location.startLine) - 1);
+    return lines.slice(start, end + 1).join('\n');
+  } catch {
+    return '';
+  }
+}
+
+function appendNote(existing: string | undefined, note: string): string {
+  return existing ? `${existing} ${note}` : note;
 }
 
 function emptyResult(message: string): ReviewOutput {
@@ -715,10 +751,16 @@ async function publishFindingPreview(
       line: finding.location.startLine,
       confidence: finding.confidence,
       rule: finding.ruleId,
-      severity: finding.severity === 'info' ? 'info' : 'warn',
+      severity: finding.review?.kind === 'blocker' ? 'blocker' : finding.severity === 'info' ? 'info' : 'warn',
+      ...(finding.review ? {
+        commentKind: finding.review.kind,
+        issueType: finding.review.issueType,
+        autoFixable: finding.review.autoFixable,
+        requiresManualReview: finding.review.requiresManualReview,
+      } : {}),
       body: finding.message.body || finding.message.title,
       duplicates: (finding.siblings ?? []).map((s) => `${s.file}:${s.line}`),
-      reason: finding.notes ?? 'Confidence passed the inline comment gate.',
+      reason: finding.review?.rationale ?? finding.notes ?? 'Confidence passed the inline comment gate.',
     });
   }
 

@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import type { ReviewCommentKind, ReviewIssueType } from '@abid/core';
 import { InMemoryFindingsStore } from '@abid/findings';
 import { CalibrationModel } from '@abid/confidence-engine';
 
@@ -211,7 +212,11 @@ type ReviewUiEvent =
       line: number;
       confidence: number;
       rule?: string;
-      severity?: 'warn' | 'info';
+      severity?: 'blocker' | 'warn' | 'info';
+      commentKind?: ReviewCommentKind;
+      issueType?: ReviewIssueType;
+      autoFixable?: boolean;
+      requiresManualReview?: boolean;
       body?: string;
       duplicates?: string[];
       reason: string;

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Finding, PullRequestRef } from '@abid/core';
 import { DiffIndex, parseUnifiedDiff } from '@abid/git-diff-engine';
 import type { AdoClient, AdoThreadRequest } from './client.js';
-import { postFinding } from './comment-poster.js';
+import { formatComment, postFinding } from './comment-poster.js';
 
 const DIFF = `diff --git a/src/app/user.component.ts b/src/app/user.component.ts
 --- a/src/app/user.component.ts
@@ -92,6 +92,26 @@ describe('postFinding', () => {
     });
 
     expect(result).toEqual({ posted: false, reason: 'line-not-in-changed-hunk', fallbackLine: 11 });
+  });
+
+  it('formats auto-fix comments as Azure DevOps suggestion blocks', () => {
+    const comment = formatComment({
+      ...findingAt(11),
+      review: {
+        kind: 'inline-suggestion',
+        issueType: 'null-safety',
+        postInline: true,
+        autoFixable: true,
+        suggestionPresentation: 'azure-suggestion',
+        requiresManualReview: false,
+        threadStatus: 'active',
+        rationale: 'Auto-fix enabled because the patch is exact.',
+      },
+    }, true);
+
+    expect(comment).toContain('**Suggestion**');
+    expect(comment).toContain('```suggestion');
+    expect(comment).not.toContain('```ts');
   });
 });
 

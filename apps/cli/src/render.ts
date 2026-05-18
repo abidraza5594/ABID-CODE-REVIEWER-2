@@ -1,16 +1,9 @@
 import kleur from 'kleur';
-import type { Finding } from '@abid/core';
+import type { Finding, ReviewCommentKind } from '@abid/core';
 
 /**
- * Honest renderer. Groups findings by their FINAL stage so the user sees
- * exactly what will and won't be posted. No more "4 to post" headers when
- * nothing crosses the threshold.
- *
- * Stage → bucket:
- *   'rewritten' | 'posted'        → POST   (will be sent to ADO on confirm)
- *   'summarized'                  → SUMMARY-ONLY (in PR summary, not inline)
- *   'dropped'                     → DROPPED (with reason, for transparency)
- *   'clustered' (residual)        → ANOMALY (pipeline bug indicator)
+ * Honest renderer. Groups findings by their final stage and shows the chosen
+ * review interaction: suggestion, warning, architecture, blocker, or summary.
  */
 export function renderFindings(findings: Finding[]): string {
   if (findings.length === 0) {
@@ -25,23 +18,23 @@ export function renderFindings(findings: Finding[]): string {
 
   if (toPost.length > 0) {
     lines.push('');
-    lines.push(kleur.bold().green(`━━━ ${toPost.length} comment(s) ready to post ━━━`));
+    lines.push(kleur.bold().green(`--- ${toPost.length} comment(s) ready to post ${renderKindCounts(toPost)} ---`));
     toPost.forEach((f, i) => lines.push(renderPost(f, i + 1)));
   } else {
     lines.push('');
-    lines.push(kleur.bold().yellow('━━━ 0 comments crossed the post threshold ━━━'));
+    lines.push(kleur.bold().yellow('--- 0 comments crossed the post threshold ---'));
     lines.push(kleur.dim('   Nothing will be posted to ADO. See sections below for why.'));
   }
 
   if (summarized.length > 0) {
     lines.push('');
-    lines.push(kleur.bold().yellow(`━━━ ${summarized.length} lower-confidence note(s) (PR summary only) ━━━`));
+    lines.push(kleur.bold().yellow(`--- ${summarized.length} informational note(s) (summary only) ---`));
     summarized.forEach((f) => lines.push(renderShort(f, kleur.yellow)));
   }
 
   if (dropped.length > 0) {
     lines.push('');
-    lines.push(kleur.bold().red(`━━━ ${dropped.length} finding(s) dropped ━━━`));
+    lines.push(kleur.bold().red(`--- ${dropped.length} finding(s) dropped ---`));
     dropped.forEach((f) => lines.push(renderShort(f, kleur.red)));
   }
 
@@ -56,8 +49,9 @@ export function renderFindings(findings: Finding[]): string {
 
 function renderPost(f: Finding, n: number): string {
   const parts: string[] = [];
+  const kind = f.review?.kind ?? 'warning';
   parts.push('');
-  parts.push(kleur.bold().green(`✓ #${n}  ${f.message.title}`));
+  parts.push(kleur.bold().green(`#${n} ${labelFor(kind)}: ${f.message.title}`));
   parts.push(
     kleur.dim('     ') +
     kleur.dim(`${f.location.file}:${f.location.startLine}`) +
@@ -70,36 +64,71 @@ function renderPost(f: Finding, n: number): string {
   for (const line of (f.message.body || '(no body)').split('\n')) {
     parts.push('     ' + line);
   }
-  if (f.message.suggestion) {
+
+  if (f.message.suggestion !== undefined && f.review?.suggestionPresentation === 'azure-suggestion') {
     parts.push('');
-    parts.push(kleur.dim('     ┌── suggestion ──'));
-    for (const line of f.message.suggestion.split('\n')) {
-      parts.push(kleur.green('     │ ') + line);
-    }
-    parts.push(kleur.dim('     └─────────────────'));
+    parts.push(kleur.dim('     suggestion (auto-apply)'));
+    renderSuggestionLines(parts, f.message.suggestion);
+  } else if (f.message.suggestion && f.review?.suggestionPresentation === 'code-example') {
+    parts.push('');
+    parts.push(kleur.dim('     suggested direction (manual review)'));
+    renderSuggestionLines(parts, f.message.suggestion);
   }
+
   if (f.siblings && f.siblings.length > 0) {
     parts.push('');
     parts.push(kleur.dim('     Same issue also at:'));
-    for (const s of f.siblings) parts.push(kleur.dim(`       · ${s.file}:${s.line}`));
+    for (const s of f.siblings) parts.push(kleur.dim(`       - ${s.file}:${s.line}`));
   }
-  if (f.notes) {
+  if (f.notes || f.review?.rationale) {
     parts.push('');
-    parts.push(kleur.dim('     ') + kleur.dim(f.notes));
+    parts.push(kleur.dim('     ') + kleur.dim(f.review?.rationale ?? f.notes ?? ''));
   }
   return parts.join('\n');
+}
+
+function renderSuggestionLines(parts: string[], suggestion: string): void {
+  const lines = suggestion.length > 0 ? suggestion.split('\n') : ['<delete selected line>'];
+  for (const line of lines) {
+    parts.push(kleur.green('       ') + line);
+  }
 }
 
 function renderShort(f: Finding, color: (s: string) => string): string {
   const lines: string[] = [];
   lines.push(
-    '  ' + color('·') + ' ' + f.message.title +
-    kleur.dim(`  (${f.location.file}:${f.location.startLine}, conf ${f.confidence.toFixed(2)})`),
+    '  ' + color('-') + ' ' + f.message.title +
+    kleur.dim(`  (${f.location.file}:${f.location.startLine}, ${f.review?.kind ?? f.stage}, conf ${f.confidence.toFixed(2)})`),
   );
   if (f.notes) {
-    lines.push(kleur.dim('      ↳ ') + kleur.dim(f.notes));
+    lines.push(kleur.dim('      -> ') + kleur.dim(f.notes));
   } else if (f.dispositionReason) {
-    lines.push(kleur.dim('      ↳ ') + kleur.dim(`reason: ${f.dispositionReason}`));
+    lines.push(kleur.dim('      -> ') + kleur.dim(`reason: ${f.dispositionReason}`));
   }
   return lines.join('\n');
+}
+
+function renderKindCounts(findings: Finding[]): string {
+  const counts = new Map<ReviewCommentKind, number>();
+  for (const finding of findings) {
+    const kind = finding.review?.kind ?? 'warning';
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  const text = [...counts.entries()].map(([kind, count]) => `${count} ${labelFor(kind).toLowerCase()}`).join(', ');
+  return text ? `(${text})` : '';
+}
+
+function labelFor(kind: ReviewCommentKind): string {
+  switch (kind) {
+    case 'inline-suggestion':
+      return 'Suggestion';
+    case 'warning':
+      return 'Warning';
+    case 'architecture':
+      return 'Architecture';
+    case 'blocker':
+      return 'Blocker';
+    case 'informational':
+      return 'Information';
+  }
 }

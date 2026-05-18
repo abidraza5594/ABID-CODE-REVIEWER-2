@@ -20,7 +20,7 @@ import type { AdoClient, AdoThreadRequest } from './client.js';
 export interface PostOptions {
   /** When true, sets thread status to 'fixed' or 'closed' to reduce visual noise. */
   closeThreadOnLowSeverity?: boolean;
-  /** When true, formats the comment as a suggestion block. */
+  /** When true, formats safe exact patches as Azure suggestion blocks. */
   includeSuggestionBlock?: boolean;
   /** Already-posted fingerprints (across iterations) to skip. */
   alreadyPosted?: Set<string>;
@@ -39,6 +39,9 @@ export async function postFinding(
 ): Promise<{ posted: boolean; reason?: string; threadId?: number; fallbackLine?: number }> {
   if (opts.alreadyPosted && finding.fingerprint && opts.alreadyPosted.has(finding.fingerprint)) {
     return { posted: false, reason: 'already-posted-this-iteration' };
+  }
+  if (finding.review && !finding.review.postInline) {
+    return { posted: false, reason: 'review-decision-summary-only' };
   }
 
   const checks = isPostable(finding.location, diff, { requireAddedLine: true });
@@ -71,7 +74,7 @@ export async function postFinding(
   }
 
   const thread: AdoThreadRequest = {
-    status: opts.closeThreadOnLowSeverity && finding.severity === 'info' ? 'closed' : 'active',
+    status: finding.review?.threadStatus ?? (opts.closeThreadOnLowSeverity && finding.severity === 'info' ? 'closed' : 'active'),
     comments: [{ parentCommentId: 0, commentType: 'text', content: body }],
     threadContext: {
       filePath: toAdoFilePath(finding.location.file),
@@ -88,18 +91,36 @@ export async function postFinding(
 export function formatComment(finding: Finding, includeSuggestion: boolean): string {
   const lines: string[] = [];
 
-  // The title is *not* echoed — ADO threads don't have a title separate from
-  // the first comment, and the body opens with the same point. Echoing makes
-  // comments feel wordy.
+  const label = labelFor(finding);
+  if (label) {
+    lines.push(`**${label}**`);
+    lines.push('');
+  }
 
   lines.push(finding.message.body.trim() || finding.message.title.trim());
 
-  if (includeSuggestion && finding.message.suggestion) {
+  const suggestion = finding.message.suggestion;
+  const presentation = finding.review?.suggestionPresentation ?? (suggestion ? 'code-example' : 'none');
+  if (includeSuggestion && presentation === 'azure-suggestion' && suggestion !== undefined) {
     lines.push('');
+    lines.push('Suggested fix:');
+    lines.push('```suggestion');
+    const exactSuggestion = suggestion.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n$/, '');
+    if (exactSuggestion.length > 0) {
+      lines.push(exactSuggestion);
+    }
+    lines.push('```');
+  } else if (includeSuggestion && presentation === 'code-example' && suggestion && suggestion.trim().length > 0) {
+    lines.push('');
+    lines.push('Suggested direction:');
     const lang = finding.message.suggestionLanguage ?? 'ts';
     lines.push('```' + lang);
-    lines.push(finding.message.suggestion.trim());
+    lines.push(suggestion.trim());
     lines.push('```');
+    if (finding.review?.requiresManualReview) {
+      lines.push('');
+      lines.push('Please check the behavior before changing this code.');
+    }
   }
 
   if (finding.siblings && finding.siblings.length > 0 && !finding.message.body.includes('This same issue also exists here:')) {
@@ -111,9 +132,26 @@ export function formatComment(finding: Finding, includeSuggestion: boolean): str
   }
 
   lines.push('');
-  lines.push(`<sub>rule: \`${finding.ruleId}\` · confidence ${finding.confidence.toFixed(2)}</sub>`);
+  lines.push(`<sub>rule: \`${finding.ruleId}\` - type ${finding.review?.kind ?? 'warning'} - confidence ${finding.confidence.toFixed(2)}</sub>`);
 
   return lines.join('\n');
+}
+
+function labelFor(finding: Finding): string | undefined {
+  switch (finding.review?.kind) {
+    case 'inline-suggestion':
+      return 'Suggestion';
+    case 'warning':
+      return 'Warning';
+    case 'architecture':
+      return 'Architecture review';
+    case 'blocker':
+      return 'Blocker';
+    case 'informational':
+      return 'Information';
+    default:
+      return undefined;
+  }
 }
 
 function lookupChangeTrackingId(ids: ReadonlyMap<string, number>, file: string): number | undefined {

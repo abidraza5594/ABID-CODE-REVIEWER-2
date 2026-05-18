@@ -26,7 +26,9 @@ export type DispositionReason =
   | 'not-on-added-line'
   | 'rule-disabled-for-repo'
   | 'rate-limited'
-  | 'sibling';
+  | 'sibling'
+  | 'informational'
+  | 'manual-review-required';
 
 export interface FindingMessage {
   /** Short summary, max ~80 chars. Used in PR summary and ADO thread title. */
@@ -37,6 +39,52 @@ export interface FindingMessage {
   suggestion?: string;
   /** Markdown language tag for the suggestion (`ts`, `html`, etc.). */
   suggestionLanguage?: 'ts' | 'html' | 'scss' | 'json';
+}
+
+export type ReviewCommentKind =
+  | 'inline-suggestion'
+  | 'warning'
+  | 'architecture'
+  | 'blocker'
+  | 'informational';
+
+export type ReviewIssueType =
+  | 'null-safety'
+  | 'error-handling'
+  | 'async-flow'
+  | 'rxjs-lifecycle'
+  | 'performance'
+  | 'architecture'
+  | 'security'
+  | 'ssr'
+  | 'typing'
+  | 'maintainability'
+  | 'state'
+  | 'forms'
+  | 'unknown';
+
+export type SuggestionPresentation =
+  | 'azure-suggestion'
+  | 'code-example'
+  | 'none';
+
+export interface ReviewDecision {
+  /** How this should appear to the developer. */
+  kind: ReviewCommentKind;
+  /** The practical issue family behind the finding. */
+  issueType: ReviewIssueType;
+  /** False means summary panel only. No ADO inline thread should be posted. */
+  postInline: boolean;
+  /** True only when the patch is exact, deterministic, and low-risk. */
+  autoFixable: boolean;
+  /** Whether the suggestion should be an auto-apply ADO suggestion block. */
+  suggestionPresentation: SuggestionPresentation;
+  /** True when a person must understand behavior before changing code. */
+  requiresManualReview: boolean;
+  /** ADO thread status to use when posting inline. */
+  threadStatus: 'active' | 'closed';
+  /** Short audit reason for why this comment mode was chosen. */
+  rationale: string;
 }
 
 export interface Finding {
@@ -65,6 +113,9 @@ export interface Finding {
   runtimeRefs?: string[];
 
   message: FindingMessage;
+
+  /** Final review interaction decision. Set after scoring, filtering, and exact patch checks. */
+  review?: ReviewDecision;
 
   stage: FindingStage;
 

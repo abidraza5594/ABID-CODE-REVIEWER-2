@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import kleur from 'kleur';
+import type { ReviewCommentKind, ReviewIssueType } from '@abid/core';
 import { findRepoRoot } from './paths.js';
 
 export type ReviewUiHandle = {
@@ -19,7 +20,7 @@ export type ReviewUiEventInput =
   | { type: 'reasoning'; title: string; detail: string; rule?: string; confidenceDelta?: number }
   | { type: 'runtime'; title: string; rule?: string; metrics: Record<string, number> }
   | { type: 'skip'; title: string; rule: string; reason: string; tag: string }
-  | { type: 'comment'; title: string; file: string; line: number; confidence: number; rule?: string; severity?: 'warn' | 'info'; body?: string; duplicates?: string[]; reason: string }
+  | { type: 'comment'; title: string; file: string; line: number; confidence: number; rule?: string; severity?: 'blocker' | 'warn' | 'info'; commentKind?: ReviewCommentKind; issueType?: ReviewIssueType; autoFixable?: boolean; requiresManualReview?: boolean; body?: string; duplicates?: string[]; reason: string }
   | { type: 'complete'; title: string };
 
 export async function ensureReviewUi(): Promise<ReviewUiHandle | undefined> {

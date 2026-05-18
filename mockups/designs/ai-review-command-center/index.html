@@ -474,6 +474,21 @@
       background: rgba(255, 209, 102, 0.06);
     }
 
+    .comment.blocker {
+      border-color: rgba(255, 92, 122, 0.46);
+      background: rgba(255, 92, 122, 0.075);
+    }
+
+    .comment.suggestion {
+      border-color: rgba(110, 243, 165, 0.42);
+      background: rgba(110, 243, 165, 0.075);
+    }
+
+    .comment.architecture {
+      border-color: rgba(181, 143, 255, 0.38);
+      background: rgba(181, 143, 255, 0.065);
+    }
+
     .comment.info {
       border-color: rgba(53, 208, 255, 0.3);
       background: rgba(53, 208, 255, 0.055);
@@ -1110,10 +1125,11 @@
       const host = document.querySelector('.comments .panel-body');
       const commentsHtml = liveState.comments.map((c) => `
         <div class="comment ${c.type || 'warn'}">
+          <div class="pill">${escapeHtml(c.kind || c.type || 'warning')}</div>
           <div class="pill">${escapeHtml(c.file)}:${c.line}</div>
           <p class="comment-text">${c.body}</p>
           <div class="confidence"><div style="width:${c.confidence}%"></div></div>
-          <p class="why">${c.confidence}% confidence. ${escapeHtml(c.why)}</p>
+          <p class="why">${c.confidence}% confidence. ${escapeHtml(c.why)}${c.autoFixable ? ' Auto-fix ready.' : c.manual ? ' Manual review needed.' : ''}</p>
         </div>`).join('');
       const duplicates = liveState.comments[0]?.duplicates || ['No duplicate group yet.'];
       host.innerHTML = `${commentsHtml || '<div class="comment info"><div class="pill">waiting</div><p class="comment-text">No inline comment approved yet. AI is still checking proof.</p></div>'}
@@ -1165,6 +1181,14 @@
 
     function escapeHtml(text) {
       return String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[ch]));
+    }
+
+    function cssCommentType(kind, severity) {
+      if (kind === 'inline-suggestion') return 'suggestion';
+      if (kind === 'architecture') return 'architecture';
+      if (kind === 'blocker' || severity === 'blocker') return 'blocker';
+      if (kind === 'informational' || severity === 'info') return 'info';
+      return 'warn';
     }
 
     function shortFile(file) {
@@ -1306,12 +1330,15 @@
           renderLiveFrame({
             rule: data.rule || liveState.activeRule || 'review',
             comment: {
-              type: data.severity || 'warn',
+              type: cssCommentType(data.commentKind, data.severity),
+              kind: data.commentKind || data.severity || 'warning',
               file: data.file,
               line: data.line,
               confidence: Math.round(data.confidence * 100),
               body: escapeHtml(data.body || data.title),
               why: data.reason,
+              autoFixable: Boolean(data.autoFixable),
+              manual: Boolean(data.requiresManualReview),
               duplicates: data.duplicates || []
             }
           });
