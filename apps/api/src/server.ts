@@ -77,7 +77,6 @@ async function main() {
 
   app.get('/api/reviews/:jobId/events', async (req, reply) => {
     const params = req.params as { jobId: string };
-    const query = req.query as { demo?: string };
     reply.hijack();
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -100,23 +99,7 @@ async function main() {
     subscribers.add(subscriber);
     reviewSubscribers.set(params.jobId, subscribers);
 
-    let timer: NodeJS.Timeout | undefined;
-    if (params.jobId === 'demo' && query.demo === '1') {
-      let index = 0;
-      timer = setInterval(() => {
-        const event = DEMO_REVIEW_EVENTS[index++];
-        if (!event) {
-          write({ type: 'complete', at: new Date().toISOString(), title: 'Review complete' });
-          if (timer) clearInterval(timer);
-          reply.raw.end();
-          return;
-        }
-        write({ ...event, at: new Date().toISOString() } as ReviewUiEvent);
-      }, 850);
-    }
-
     req.raw.on('close', () => {
-      if (timer) clearInterval(timer);
       subscribers.delete(subscriber);
       if (subscribers.size === 0) reviewSubscribers.delete(params.jobId);
     });
@@ -239,132 +222,6 @@ type PendingReviewUiEvent = ReviewUiEvent extends infer Event
     ? Omit<Event, 'at'>
     : never
   : never;
-
-const DEMO_REVIEW_EVENTS: PendingReviewUiEvent[] = [
-  {
-    type: 'timeline',
-    title: 'Parsing changed files',
-    detail: '34 files changed. 10 Angular components are in review scope.',
-    status: 'done',
-    rule: 'diff',
-    confidence: 0.72,
-  },
-  {
-    type: 'file',
-    title: 'Opening related files',
-    rule: 'subscription',
-    file: 'src/app/features/global-config/settings/module/automation-settings/automation-settings.component.ts',
-    line: 147,
-    code: [
-      [140, 'saveDialerConfig(payload: DialerConfig) {', ''],
-      [141, '  this.loading = true;', 'hot'],
-      [142, '  this.dialerService.updateDialerConfiguration(payload)', 'bad'],
-      [143, '    .subscribe((res) => {', 'bad'],
-      [144, '      this.loading = false;', ''],
-      [145, '      this.reloadDialerConfig();', ''],
-      [146, '    });', ''],
-      [147, '  this.dialerService.geteDialerConfiguration()', 'bad'],
-      [148, '    .subscribe((config) => this.config = config);', 'bad'],
-      [149, '}', ''],
-    ],
-    related: [
-      { file: 'automation-settings.component.html', reason: 'Template reads fields from this component.' },
-      { file: 'dialer.service.ts', reason: 'Component subscribes to dialer API flow.' },
-      { file: 'global-config.module.ts', reason: 'Dependency scope and provider lifetime check.' },
-    ],
-  },
-  {
-    type: 'reasoning',
-    title: 'Checking cleanup proof',
-    detail: 'AI found subscribe(). It is checking pipe operators, DestroyRef, ngOnDestroy, and manual unsubscribe paths.',
-    rule: 'subscription',
-    confidenceDelta: 0.12,
-  },
-  {
-    type: 'timeline',
-    title: 'Checking null safety',
-    detail: 'Template reads were compared with types, route resolvers, @if guards, and optional chaining.',
-    status: 'done',
-    rule: 'null',
-  },
-  {
-    type: 'skip',
-    title: 'Null issue skipped',
-    rule: 'null',
-    reason: 'Resolver and template guard already prove the value exists.',
-    tag: 'guarded',
-  },
-  {
-    type: 'timeline',
-    title: 'Checking Angular list rendering',
-    detail: 'ngFor and @for blocks checked for trackBy or modern track expressions.',
-    status: 'done',
-    rule: 'trackby',
-  },
-  {
-    type: 'skip',
-    title: 'trackBy issue skipped',
-    rule: 'trackby',
-    reason: 'Modern @for track expression already exists.',
-    tag: 'clean',
-  },
-  {
-    type: 'timeline',
-    title: 'Checking template hot paths',
-    detail: 'Template method calls are compared with OnPush, signals, and runtime render counts.',
-    status: 'running',
-    rule: 'template',
-  },
-  {
-    type: 'skip',
-    title: 'Template method summary-only',
-    rule: 'template',
-    reason: 'Runtime render count stayed below the posting threshold.',
-    tag: 'summary',
-  },
-  {
-    type: 'runtime',
-    title: 'Runtime trace matched static finding',
-    rule: 'subscription',
-    metrics: {
-      renders: 42,
-      subscriptionsOpen: 2,
-      changeDetectionMs: 118,
-      domMutations: 276,
-      apiCalls: 6,
-    },
-  },
-  {
-    type: 'comment',
-    title: 'Comment ready',
-    rule: 'subscription',
-    severity: 'warn',
-    file: 'automation-settings.component.ts',
-    line: 147,
-    confidence: 0.92,
-    body: 'This subscription is not cleaned up. It can keep running after this component is gone. Please add takeUntilDestroyed before subscribe().',
-    duplicates: [
-      'automation-settings.component.ts:73',
-      'app.component.ts:140 summary-only',
-      'schedule-assignment.component.ts:675 low confidence',
-    ],
-    reason: 'Static AST and runtime trace both show this subscription can stay open after component destroy.',
-  },
-  {
-    type: 'timeline',
-    title: 'Checking IndexedDB cache flow',
-    detail: 'Writes and reads checked for non-awaited stale-cache races.',
-    status: 'done',
-    rule: 'indexeddb',
-  },
-  {
-    type: 'skip',
-    title: 'IndexedDB race skipped',
-    rule: 'indexeddb',
-    reason: 'Write promise is awaited before reading the same store.',
-    tag: 'safe',
-  },
-];
 
 main().catch((err) => {
   log.error({ err: { message: (err as Error).message, stack: (err as Error).stack } }, 'fatal');

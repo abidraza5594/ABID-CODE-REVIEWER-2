@@ -45,12 +45,13 @@ export async function buildPrSummary(inputs: SummaryInputs, deps: SummaryDeps): 
     posted_titles_json: JSON.stringify(inputs.posted.map((f) => ({ rule: f.ruleId, title: f.message.title }))),
   });
   const res = await deps.mistral.chat({
+    ...(template.meta.model ? { model: template.meta.model } : {}),
     messages: [
       { role: 'system', content: 'You write a single short paragraph in plain English. No headings, no lists, no markdown.' },
       { role: 'user', content: prompt },
     ],
-    temperature: 0.2,
-    maxTokens: 200,
+    temperature: template.meta.temperature ?? 0.2,
+    maxTokens: template.meta.maxTokens ?? 200,
   });
 
   lines.push(res.content.trim());

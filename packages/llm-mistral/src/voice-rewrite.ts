@@ -38,19 +38,21 @@ export async function rewriteFinding(finding: Finding, deps: RewriteDeps): Promi
       title_hint: finding.message.title,
       severity: finding.severity,
       evidence_json: JSON.stringify(finding.evidence, null, 2),
+      duplicates_json: JSON.stringify(finding.siblings ?? [], null, 2),
       suggestion_hint: finding.message.suggestion ?? '',
       suggestion_lang: finding.message.suggestionLanguage ?? 'ts',
       prior_lint_failures: priorIssues.join(', ') || 'none',
     });
 
     const res = await deps.mistral.chat({
+      ...(template.meta.model ? { model: template.meta.model } : {}),
       messages: [
         { role: 'system', content: 'You answer strictly in JSON. Output only the JSON object, no prose. Follow the project voice rules listed in the prompt.' },
         { role: 'user', content: prompt },
       ],
       responseFormat: 'json_object',
-      temperature: 0.15,
-      maxTokens: 512,
+      temperature: template.meta.temperature ?? 0.15,
+      maxTokens: template.meta.maxTokens ?? 512,
     });
 
     let parsed: { title?: string; body?: string; suggestion?: string };

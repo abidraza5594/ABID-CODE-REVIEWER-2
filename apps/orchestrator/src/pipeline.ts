@@ -375,7 +375,7 @@ async function loadJobConfig(job: ReviewJob): Promise<JobConfig> {
     pat: requiredEnv('ABID_ADO_PAT'),
     cloneUrlWithAuth: `https://abid:${requiredEnv('ABID_ADO_PAT')}@dev.azure.com/${job.pr.organization}/${job.pr.project}/_git/${job.pr.repositoryName}`,
     mistralApiKey: requiredEnv('MISTRAL_API_KEY'),
-    mistralModel: process.env['MISTRAL_MODEL'] ?? 'devstral-medium-latest',
+    mistralModel: process.env['MISTRAL_MODEL'] ?? 'devstral-2512',
     mistralEmbedModel: process.env['MISTRAL_EMBED_MODEL'] ?? 'codestral-embed',
     promptsDir: process.env['ABID_PROMPTS_DIR'] ?? path.join(process.cwd(), 'prompts'),
     useFakeEmbeddings: process.env['ABID_FAKE_EMBED'] === '1',

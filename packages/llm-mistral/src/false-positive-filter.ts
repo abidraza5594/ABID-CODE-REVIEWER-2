@@ -55,12 +55,13 @@ export async function filterFinding(
   });
 
   const res = await deps.mistral.chat({
+    ...(template.meta.model ? { model: template.meta.model } : {}),
     messages: [
       { role: 'system', content: 'You answer strictly in JSON. Output only the JSON object, no prose.' },
       { role: 'user', content: prompt },
     ],
     responseFormat: 'json_object',
-    temperature: 0.0,
+    temperature: template.meta.temperature ?? 0.0,
     maxTokens: template.meta.maxTokens ?? 256,
   });
 

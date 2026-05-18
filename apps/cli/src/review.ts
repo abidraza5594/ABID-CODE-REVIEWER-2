@@ -8,7 +8,14 @@ import { ulid } from '@abid/core';
 import { DiffIndex, parseUnifiedDiff, type FileDiff } from '@abid/git-diff-engine';
 import { AstProject, type ComponentDescriptor } from '@abid/ast-engine';
 import { buildContext, type RepoContext } from '@abid/repo-context-engine';
-import { ALL_RULES, runAnalyzer, type RunOptions } from '@abid/angular-analyzer';
+import {
+  ALL_RULES,
+  ENGINEERING_REVIEW_PHASES,
+  MANDATORY_ISSUE_CATEGORIES,
+  REVIEW_CHECK_LABELS,
+  runAnalyzer,
+  type RunOptions,
+} from '@abid/angular-analyzer';
 import { applyScore, classify } from '@abid/confidence-engine';
 import { dedupFindings, FakeEmbedClient } from '@abid/deduplication-engine';
 import { AdoClient, postFinding } from '@abid/azure-devops';
@@ -165,7 +172,7 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
 
     const mistral = new MistralClient({
       apiKey: requiredEnv('MISTRAL_API_KEY'),
-      model: process.env['MISTRAL_MODEL'] ?? 'devstral-medium-latest',
+      model: process.env['MISTRAL_MODEL'] ?? 'devstral-2512',
       customerId: 'cli',
     });
     const promptsDir = process.env['ABID_PROMPTS_DIR']
@@ -468,66 +475,41 @@ const SEQUENTIAL_PHASES: Array<{
   title: string;
   rule: string;
   detail: (file: FileDiff) => string;
-}> = [
+}> = ENGINEERING_REVIEW_PHASES.map((phase) => ({
+  id: phase.id,
+  title: phase.title,
+  rule: phase.rule,
+  detail: (file: FileDiff) => phaseDetail(phase.id, file),
+}));
+
+function phaseDetail(phaseId: string, file: FileDiff): string {
+  const name = file.newPath;
+  const details: Record<string, string> = {
+    'syntax-ast': `${name}: syntax, symbols, typed property access, lifecycle hooks, imports, DI, and changed-line anchors are checked.`,
+    template: `${name}: Angular templates, guards, bindings, forms, trackBy, hot expressions, and component/template pairing are checked.`,
+    runtime: `${name}: runtime crash paths, rendering cost, memory growth signals, repeated requests, and state consistency risks are validated when evidence exists.`,
+    performance: `${name}: expensive loops, duplicate requests, DOM mutation, change detection, rerender, and repeated-calculation patterns are checked.`,
+    'async-flow': `${name}: promises, async/await, RxJS streams, subscriptions, loading/error paths, and race-prone flow are checked.`,
+    architecture: `${name}: service boundaries, circular dependencies, dependency injection, state ownership, and large-component responsibility are checked.`,
+    maintainability: `${name}: duplicate logic, dead code, unused imports, explicit any, typing gaps, and large method complexity are checked.`,
+    security: `${name}: XSS-sensitive sanitizer bypasses, unsafe DOM writes, API misuse, and SSR/browser-global hazards are checked.`,
+    scalability: `${name}: cache synchronization, store synchronization, shared-service sprawl, and poor growth patterns are checked.`,
+    dedup: `${name}: candidate findings are normalized so repeated issues become one high-confidence review item.`,
+    comments: `${name}: final candidate comments are generated only after the full engineering checklist has run.`,
+  };
+  return details[phaseId] ?? `${name}: ${phaseId} completed.`;
+}
+
+const REVIEW_CHECK_COMPLETION = REVIEW_CHECK_LABELS.map((label) => `${label} completed`).join(' | ');
+
+function fullCategorySummary(): string {
+  return `${MANDATORY_ISSUE_CATEGORIES.length} issue categories covered: ${MANDATORY_ISSUE_CATEGORIES.join(', ')}.`;
+}
+
+const INITIAL_REVIEW_CHECKS = [
   {
-    id: 'diff',
-    title: 'PR diff parsing',
-    rule: 'diff',
-    detail: (file) => `${file.newPath} changed lines are mapped before analysis starts.`,
-  },
-  {
-    id: 'queue',
-    title: 'Queue changed file',
-    rule: 'diff',
-    detail: (file) => `${file.newPath} is now the only active file. Other changed files stay pending.`,
-  },
-  {
-    id: 'ast',
-    title: 'Build TypeScript AST',
-    rule: 'template',
-    detail: (file) => `${file.newPath} symbols, types, lifecycle hooks, signals, forms, and async calls are being checked.`,
-  },
-  {
-    id: 'template',
-    title: 'Analyze Angular template',
-    rule: 'template',
-    detail: (file) => `${file.newPath} is checked with its component/template pair when Angular context exists.`,
-  },
-  {
-    id: 'context',
-    title: 'Open related files only if needed',
-    rule: 'diff',
-    detail: (file) => `${file.newPath} related services, interfaces, stores, and templates are opened only from direct evidence.`,
-  },
-  {
-    id: 'runtime',
-    title: 'Runtime validation',
-    rule: 'runtime',
-    detail: (file) => `${file.newPath} runtime risk is validated for crashes, repeated calls, rendering cost, and leaks.`,
-  },
-  {
-    id: 'findings',
-    title: 'Generate findings',
-    rule: 'diff',
-    detail: (file) => `${file.newPath} is checked across the full engineering issue set, not only subscriptions.`,
-  },
-  {
-    id: 'dedup',
-    title: 'Deduplicate findings',
-    rule: 'diff',
-    detail: (file) => `${file.newPath} findings are grouped so only the highest-confidence location gets a comment.`,
-  },
-  {
-    id: 'stream',
-    title: 'Stream result to UI',
-    rule: 'diff',
-    detail: (file) => `${file.newPath} status is streamed before moving to the next queued file.`,
-  },
-  {
-    id: 'complete',
-    title: 'Mark file completed',
-    rule: 'diff',
-    detail: (file) => `${file.newPath} completed. Moving to the next changed file in order.`,
+    title: 'Engineering review checklist loaded',
+    detail: fullCategorySummary(),
   },
 ];
 
@@ -538,15 +520,35 @@ async function analyzeChangedFilesSequential(
   const findings: Finding[] = [];
   const total = input.changedFiles.length;
 
+  for (const check of INITIAL_REVIEW_CHECKS) {
+    await input.ui({
+      type: 'timeline',
+      title: check.title,
+      detail: check.detail,
+      status: 'done',
+      rule: 'review',
+    });
+  }
+
   for (let index = 0; index < total; index++) {
     const file = input.changedFiles[index]!;
-    const fileRule = ruleForPath(file.newPath);
     const related = relatedFilesFor(file.newPath, input.context, input.changedComponents);
     const line = firstChangedLine(file);
     const code = diffFileToCodeRows(file);
 
     for (const phase of SEQUENTIAL_PHASES) {
-      const activeRule = phase.rule === 'diff' ? fileRule : phase.rule;
+      const activeRule = phase.rule;
+      const phaseNeedsRelatedProof = [
+        'template',
+        'runtime',
+        'performance',
+        'async-flow',
+        'architecture',
+        'maintainability',
+        'security',
+        'scalability',
+        'comments',
+      ].includes(phase.id);
       await input.ui({
         type: 'file',
         title: `${phase.title} (${index + 1}/${total})`,
@@ -554,16 +556,16 @@ async function analyzeChangedFilesSequential(
         line,
         rule: activeRule,
         code,
-        related: phase.id === 'context' || phase.id === 'template' || phase.id === 'runtime' || phase.id === 'findings'
+        related: phaseNeedsRelatedProof
           ? related
-          : [{ file: file.newPath, reason: 'Current changed file. Related files stay closed until the phase needs proof.' }],
+          : [{ file: file.newPath, reason: 'Current changed file. Related files stay closed until this phase needs proof.' }],
       });
 
       await input.ui({
         type: 'timeline',
         title: phase.title,
         detail: phase.detail(file),
-        status: phase.id === 'complete' ? 'done' : 'running',
+        status: 'running',
         rule: activeRule,
       });
 
@@ -576,30 +578,48 @@ async function analyzeChangedFilesSequential(
         });
       }
 
-      if (phase.id !== 'findings') continue;
+      if (phase.id === 'comments') {
+        const fileDiff = new DiffIndex({ files: [file] });
+        const fileComponents = componentsForFile(file.newPath, input.changedComponents);
+        const fileFindings = runAnalyzer(
+          {
+            jobId: input.jobId,
+            tenantId: 'cli',
+            project: input.project,
+            repo: input.context,
+            diff: fileDiff,
+            changedComponents: fileComponents,
+          },
+          runOptions,
+        );
+        findings.push(...fileFindings);
 
-      const fileDiff = new DiffIndex({ files: [file] });
-      const fileComponents = componentsForFile(file.newPath, input.changedComponents);
-      const fileFindings = runAnalyzer(
-        {
-          jobId: input.jobId,
-          tenantId: 'cli',
-          project: input.project,
-          repo: input.context,
-          diff: fileDiff,
-          changedComponents: fileComponents,
-        },
-        runOptions,
-      );
-      findings.push(...fileFindings);
+        await input.ui({
+          type: 'reasoning',
+          title: 'Full engineering checks completed',
+          detail: `${file.newPath}: ${fileFindings.length} candidate finding(s). ${REVIEW_CHECK_COMPLETION}. Low-confidence items stay out of inline comments.`,
+          rule: activeRule,
+        });
+      }
 
       await input.ui({
-        type: 'reasoning',
-        title: 'Full engineering checks completed',
-        detail: `${file.newPath}: ${fileFindings.length} finding(s). Checked null safety, runtime crashes, RxJS, repeated calls, performance, Angular rendering, state, cache, forms, typing, security, lifecycle, and dedup risk.`,
+        type: 'timeline',
+        title: `${phase.title} completed`,
+        detail: phase.id === 'comments'
+          ? `${file.newPath}: candidate comments are ready for scoring, false-positive filtering, global deduplication, and voice rewrite.`
+          : `${phase.detail(file)} Completed.`,
+        status: 'done',
         rule: activeRule,
       });
     }
+
+    await input.ui({
+      type: 'timeline',
+      title: 'Mark file completed',
+      detail: `${file.newPath} completed after syntax, template, runtime, performance, async, architecture, maintainability, security, scalability, dedup, and final-comment phases.`,
+      status: 'done',
+      rule: 'review',
+    });
   }
 
   return findings;
@@ -749,9 +769,12 @@ function diffFileToCodeRows(file: FileDiff): Array<[number, string, string?]> {
 function ruleForPath(file: string): string {
   if (file.endsWith('.html')) return 'template';
   if (file.includes('cache') || file.toLowerCase().includes('indexeddb')) return 'indexeddb';
-  if (file.includes('service')) return 'network';
+  if (/security|sanitize|auth|permission/i.test(file)) return 'security';
+  if (/form|validator/i.test(file)) return 'forms';
+  if (/service|api|client/i.test(file)) return 'network';
   if (file.includes('store') || file.includes('state')) return 'state';
-  return 'diff';
+  if (/component|directive|pipe/i.test(file)) return 'runtime';
+  return 'syntax';
 }
 
 function emptyPostSummary(): PostSummary {

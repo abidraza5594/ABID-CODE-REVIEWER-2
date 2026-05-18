@@ -118,11 +118,6 @@
       animation: none;
     }
 
-    .dot.demo {
-      background: var(--cyan);
-      box-shadow: 0 0 14px rgba(53, 208, 255, 0.55);
-    }
-
     .grid {
       display: grid;
       grid-template-columns: 340px minmax(560px, 1fr) 430px;
@@ -699,33 +694,15 @@
   </div>
 
   <script>
-    const timeline = [
-      ['done', 'PR received', 'Azure webhook accepted. Iteration 7 is being reviewed.'],
-      ['done', 'Parsing changed files', 'Unified diff mapped to exact new-line anchors.'],
-      ['done', 'Building repository graph', '410 Angular components, services, resolvers, signals indexed.'],
-      ['done', 'Analyzing Angular templates', 'Template + TypeScript binding checked together.'],
-      ['running', 'Tracing RxJS flow', 'subscribe() calls matched against cleanup guarantees.'],
-      ['running', 'Checking runtime render cycles', 'Playwright trace is streaming CDP metrics.'],
-      ['done', 'Detecting duplicate issues', '15 sibling findings grouped into summary only.'],
-      ['running', 'Generating AI comments', 'Mistral receives diff, evidence, trace summary, and confidence notes.'],
-      ['done', 'Posting Azure comments', '2 exact inline comments are ready for approval.']
-    ];
-
-    const thoughts = [
-      ['AI noticed repeated subscribe calls without cleanup.', '+12%'],
-      ['Checking if DestroyRef is used at this exact call site.', '+5%'],
-      ['Comparing service observable type with HttpClient completion rules.', '+8%'],
-      ['Runtime trace shows 2 subscriptions stayed open after navigation.', '+17%'],
-      ['Duplicate issue found at line 73. Merging into one comment.', 'dedup'],
-      ['False positive check passed. No resolver or template guard can explain this away.', '+9%']
-    ];
+    const timeline = [];
+    const thoughts = [];
 
     const metrics = [
-      ['42', 'renders'],
-      ['118ms', 'change detection'],
-      ['2', 'open subscriptions'],
-      ['276', 'DOM mutations'],
-      ['6', 'API calls']
+      ['0', 'renders'],
+      ['0ms', 'change detection'],
+      ['0', 'open subscriptions'],
+      ['0', 'DOM mutations'],
+      ['0', 'API calls']
     ];
 
     function renderLists() {
@@ -780,7 +757,13 @@
       c.height = rect.height * devicePixelRatio;
       ctx.scale(devicePixelRatio, devicePixelRatio);
       ctx.clearRect(0,0,rect.width,rect.height);
-      const bars = [44, 82, 31, 118, 55, 92, 73, 126, 39, 68, 96, 48];
+      const bars = window.runtimeSeries || [];
+      if (bars.length === 0) {
+        ctx.fillStyle = 'rgba(147,164,184,.42)';
+        ctx.font = '12px Inter, sans-serif';
+        ctx.fillText('Waiting for runtime metrics', 12, 26);
+        return;
+      }
       bars.forEach((v, i) => {
         const x = i * (rect.width / bars.length) + 5;
         const h = (v / 140) * (rect.height - 24);
@@ -790,20 +773,12 @@
     }
 
     function draw() {
-      const isDemoGraph = window.reviewGraphMode === 'demo';
-      graph('repoGraph', isDemoGraph ? {
-        a: {x:.18,y:.2,r:12,color:'#35d0ff',label:'AutomationSettingsComponent'},
-        b: {x:.56,y:.18,r:10,color:'#6ef3a5',label:'DialerService'},
-        c: {x:.78,y:.38,r:10,color:'#ffd166',label:'API /global-config'},
-        d: {x:.28,y:.58,r:10,color:'#b692ff',label:'template.html'},
-        e: {x:.62,y:.72,r:12,color:'#ff6b9a',label:'runtime trace'},
-        f: {x:.15,y:.82,r:9,color:'#7aa2ff',label:'DestroyRef scan'}
-      } : {
+      graph('repoGraph', {
         a: {x:.2,y:.32,r:11,color:'#35d0ff',label:'waiting for PR diff'},
         b: {x:.52,y:.22,r:10,color:'#6ef3a5',label:'waiting for repo graph'},
         c: {x:.76,y:.46,r:10,color:'#ffd166',label:'waiting for runtime trace'},
         d: {x:.38,y:.72,r:10,color:'#b692ff',label:'no backend events yet'}
-      }, isDemoGraph ? [['a','b'],['b','c'],['a','d'],['a','e'],['a','f'],['b','e']] : [['a','b'],['b','c'],['a','d']]);
+      }, [['a','b'],['b','c'],['a','d']]);
       runtimeChart();
     }
 
@@ -825,7 +800,7 @@
       activeFile: '',
       skips: [],
       metrics: { renders: 0, changeDetectionMs: 0, subscriptionsOpen: 0, domMutations: 0, apiCalls: 0 },
-      activeRule: 'diff',
+      activeRule: 'syntax',
       streamMode: 'waiting',
       streamStatus: 'connecting',
       streamMessage: 'Connecting to live review stream.',
@@ -833,272 +808,57 @@
       currentPhaseDetail: 'No PR has been selected yet.'
     };
 
-    let localStreamTimer = null;
     let activeEventSource = null;
-
-    const demoSkips = [
-      { text: 'Null issue skipped: resolver guarantees value before route activation.', tag: 'guarded' },
-      { text: 'HTTP subscribe skipped: HttpClient observable completes after one response.', tag: 'safe' },
-      { text: 'Template method skipped: OnPush plus signal read keeps rerenders bounded.', tag: 'safe' },
-      { text: 'Duplicate comments skipped: one primary Azure comment will mention siblings.', tag: 'deduped' }
-    ];
-
-    const demoAnalysisScope = [
-      ['src/app/app.component.ts', 'changed root component', 'subscription'],
-      ['src/app/app.component.html', 'changed root template', 'template'],
-      ['src/app/features/global-config/settings/module/automation-settings/automation-settings.component.ts', 'changed component', 'subscription'],
-      ['src/app/features/global-config/settings/module/automation-settings/automation-settings.component.html', 'changed template', 'template'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.component.ts', 'changed component', 'subscription'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.component.html', 'changed template', 'template'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-info/schedule-assignment-info.component.ts', 'changed component', 'null'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-info/schedule-assignment-info.component.html', 'changed template', 'null'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-bulk-delete/schedule-assignment-bulk-delete.component.ts', 'changed component', 'subscription'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-bulk-delete/schedule-assignment-bulk-delete.component.html', 'changed template', 'template'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-actions/schedule-assignment-actions.component.ts', 'changed component', 'subscription'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-actions/schedule-assignment-actions.component.html', 'changed template', 'template'],
-      ['src/app/features/leads/cache/lead-cache.service.ts', 'changed cache service', 'indexeddb'],
-      ['src/app/features/leads/models/lead.model.ts', 'changed model type', 'typing'],
-      ['src/app/features/leads/lead-list/lead-list.component.ts', 'changed component', 'trackby'],
-      ['src/app/features/leads/lead-list/lead-list.component.html', 'changed template', 'trackby'],
-      ['src/app/features/leads/lead-row/lead-row.component.ts', 'changed row component', 'template'],
-      ['src/app/features/leads/lead-row/lead-row.component.html', 'changed row template', 'template'],
-      ['src/app/features/dashboard/dashboard-summary/dashboard-summary.component.ts', 'changed component', 'template'],
-      ['src/app/features/dashboard/dashboard-summary/dashboard-summary.component.html', 'changed template', 'template'],
-      ['src/app/features/dashboard/dashboard-store.service.ts', 'changed state service', 'state'],
-      ['src/app/features/leads/state/lead.effects.ts', 'changed NgRx effect', 'state'],
-      ['src/app/features/leads/services/lead-api.service.ts', 'changed API service', 'network'],
-      ['src/app/shared/modal/confirm.component.ts', 'changed modal component', 'lifecycle'],
-      ['src/app/shared/table/data-table.component.ts', 'changed shared component', 'trackby'],
-      ['src/app/shared/table/data-table.component.html', 'changed table template', 'trackby'],
-      ['src/app/environments/environment.ts', 'changed config', 'security'],
-      ['src/app/features/global-config/settings/module/automation-settings/automation.models.ts', 'changed interface', 'typing'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.models.ts', 'changed interface', 'typing'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-api.service.ts', 'changed API service', 'network'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment.store.ts', 'changed state store', 'state'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-form.component.ts', 'changed form component', 'forms'],
-      ['src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-form.component.html', 'changed form template', 'forms'],
-      ['src/app/shared/utils/date-range.ts', 'changed helper', 'complexity']
-    ];
 
     let analysisScope = [];
 
     const pipelinePhases = [
-      ['diff', 'PR diff parsing'],
-      ['queue', 'Queue changed file'],
-      ['ast', 'Build TypeScript AST'],
-      ['template', 'Analyze Angular template'],
-      ['context', 'Open related files only if needed'],
+      ['syntax-ast', 'Syntax and AST analysis'],
+      ['template', 'Angular template analysis'],
       ['runtime', 'Runtime validation'],
-      ['findings', 'Generate findings'],
+      ['performance', 'Performance analysis'],
+      ['async-flow', 'Async flow analysis'],
+      ['architecture', 'Architecture analysis'],
+      ['maintainability', 'Maintainability analysis'],
+      ['security', 'Security analysis'],
+      ['scalability', 'Scalability analysis'],
       ['dedup', 'Deduplicate findings'],
-      ['stream', 'Stream result to UI'],
-      ['complete', 'Mark file completed']
+      ['comments', 'Generate final comments']
     ];
 
     const issueCategories = [
-      'Null/undefined', 'Runtime crashes', 'RxJS', 'Subscription leaks', 'Repeated API calls',
-      'Performance', 'Unnecessary rerenders', 'Change detection', 'Signals', 'State sync',
-      'IndexedDB/cache', 'Duplicate logic', 'Dead code', 'Expensive loops', 'Template functions',
-      'Async handling', 'Race conditions', 'Error handling', 'API misuse', 'Security',
-      'Architecture', 'Large component', 'Forms', 'Typing', 'Promise handling',
-      'SSR/hydration', 'DOM performance', 'Event listeners', 'N+1 calls', 'Loading states',
-      'Lifecycle', 'trackBy', 'OnPush', 'Signal updates', 'Store management',
-      'Dependency injection', 'Circular deps', 'Template rendering', 'Redundant calculations', 'Runtime bottlenecks'
+      'Null/undefined issues', 'Missing optional chaining', 'Runtime crash possibilities',
+      'Missing error handling', 'API failure handling', 'Promise handling problems',
+      'Async/await misuse', 'RxJS issues', 'Subscription leaks', 'Race conditions',
+      'Repeated API calls', 'Duplicate requests', 'Infinite loops', 'Expensive loops',
+      'Heavy template expressions', 'Change detection problems', 'Unnecessary rerenders',
+      'Signal misuse', 'Incorrect state updates', 'Store synchronization issues',
+      'Large component complexity', 'Duplicate logic', 'Dead code', 'Unused imports',
+      'Incorrect typing', 'Any type overuse', 'Wrong Angular lifecycle usage',
+      'Event listener leaks', 'DOM performance problems', 'Missing trackBy',
+      'OnPush optimization opportunities', 'Form validation problems',
+      'IndexedDB/cache synchronization issues', 'Security issues', 'XSS risks',
+      'SSR/hydration problems', 'Incorrect dependency injection', 'Circular dependencies',
+      'Runtime rendering bottlenecks', 'Memory growth patterns', 'Bad architecture patterns',
+      'Improper service separation', 'Large method complexity', 'Blocking synchronous operations',
+      'Missing loading states', 'Bad user experience patterns', 'Repeated calculations',
+      'Runtime state inconsistency', 'Template rendering inefficiencies', 'Poor scalability patterns'
     ];
 
     const ruleChecks = [
-      { id: 'diff', name: 'Diff map', state: 'clean', text: 'Changed-line anchors ready.' },
-      { id: 'runtime', name: 'Runtime validation', state: 'pending', text: 'Checking crash, render, and call evidence.' },
-      { id: 'subscription', name: 'RxJS cleanup', state: 'pending', text: 'Checking subscribe lifetimes.' },
-      { id: 'rxjs', name: 'RxJS flow', state: 'pending', text: 'Checking nested streams and repeated work.' },
-      { id: 'null', name: 'Null guards', state: 'pending', text: 'Waiting for template proof.' },
-      { id: 'trackby', name: 'trackBy', state: 'pending', text: 'Checking repeated DOM lists.' },
-      { id: 'template', name: 'Template calls', state: 'pending', text: 'Checking hot-path methods.' },
-      { id: 'indexeddb', name: 'IndexedDB cache', state: 'pending', text: 'Checking stale read races.' },
-      { id: 'network', name: 'API calls', state: 'pending', text: 'Checking duplicate calls and errors.' },
-      { id: 'state', name: 'State sync', state: 'pending', text: 'Checking signals, stores, and cache state.' },
-      { id: 'forms', name: 'Forms', state: 'pending', text: 'Checking control access and validation.' },
-      { id: 'security', name: 'Security', state: 'pending', text: 'Checking unsafe values and API misuse.' }
+      { id: 'syntax', name: 'Null safety analysis', state: 'pending', text: 'Checking nullable types, optional chaining, imports, lifecycle, and crash anchors.' },
+      { id: 'runtime', name: 'Runtime crash analysis', state: 'pending', text: 'Checking runtime state, render evidence, memory growth, and failure paths.' },
+      { id: 'template', name: 'Angular rendering analysis', state: 'pending', text: 'Checking templates, trackBy, heavy expressions, forms, and change detection.' },
+      { id: 'rxjs', name: 'RxJS analysis', state: 'pending', text: 'Checking subscriptions, nested streams, races, and repeated emissions.' },
+      { id: 'performance', name: 'Performance analysis', state: 'pending', text: 'Checking duplicate calls, loops, DOM mutation, rerenders, and synchronous work.' },
+      { id: 'async', name: 'Async/API flow analysis', state: 'pending', text: 'Checking promises, async/await, error handling, loading states, and API failure handling.' },
+      { id: 'state', name: 'State and signal analysis', state: 'pending', text: 'Checking signals, stores, cache sync, and runtime state consistency.' },
+      { id: 'forms', name: 'Forms analysis', state: 'pending', text: 'Checking control access, submit guards, validation, and user-facing states.' },
+      { id: 'architecture', name: 'Architecture analysis', state: 'pending', text: 'Checking service boundaries, DI, circular dependencies, and component responsibility.' },
+      { id: 'maintainability', name: 'Maintainability analysis', state: 'pending', text: 'Checking duplicate logic, dead code, unused imports, any usage, and method size.' },
+      { id: 'security', name: 'Security analysis', state: 'pending', text: 'Checking XSS paths, sanitizer bypasses, unsafe DOM, and SSR hazards.' },
+      { id: 'scalability', name: 'Scalability analysis', state: 'pending', text: 'Checking poor growth patterns, shared service sprawl, cache consistency, and bottlenecks.' }
     ];
-
-    const liveFrames = [
-      {
-        rule: 'diff',
-        timeline: ['done', 'PR received', 'Azure webhook accepted. Iteration 7 is being reviewed.'],
-        file: 'src/app/features/global-config/settings/module/automation-settings/automation-settings.component.ts',
-        line: 147,
-        code: [
-          [140, 'saveDialerConfig(payload: DialerConfig) {', ''],
-          [141, '  this.loading = true;', 'hot'],
-          [142, '  this.dialerService.updateDialerConfiguration(payload)', 'bad'],
-          [143, '    .subscribe((res) => {', 'bad'],
-          [144, '      this.loading = false;', ''],
-          [145, '      this.reloadDialerConfig();', ''],
-          [146, '    });', ''],
-          [147, '  this.dialerService.geteDialerConfiguration()', 'bad'],
-          [148, '    .subscribe((config) => this.config = config);', 'bad'],
-          [149, '}', '']
-        ],
-        related: [
-          ['dialer.service.ts', 'Opened because component calls API observable.'],
-          ['automation-settings.component.html', 'Opened because template reads updated config.'],
-          ['global-config.module.ts', 'Opened to verify provider lifetime.'],
-          ['DestroyRef import scan', 'No call-site cleanup proof found.']
-        ],
-        thought: ['AI started with changed lines only, then opened files needed to prove lifetime and template impact.', '+4%'],
-        metrics: { renders: 8, changeDetectionMs: 24, subscriptionsOpen: 0, domMutations: 42, apiCalls: 1 }
-      },
-      {
-        rule: 'subscription',
-        timeline: ['running', 'Tracing RxJS flow', 'subscribe() calls matched against cleanup guarantees.'],
-        file: 'src/app/app.component.ts',
-        line: 177,
-        code: [
-          [172, 'this.router.events', 'bad'],
-          [173, '  .pipe(filter((event) => event instanceof NavigationEnd))', ''],
-          [174, '  .subscribe(() => {', 'bad'],
-          [175, '    this.refreshMenu();', ''],
-          [176, '  });', ''],
-          [177, '// summary-only: long-lived app root reduces leak risk', 'hot']
-        ],
-        related: [
-          ['app-routing.module.ts', 'Opened to inspect router lifecycle.'],
-          ['menu.service.ts', 'Opened because subscription calls refreshMenu().'],
-          ['auth.service.ts', 'Opened because app root owns auth state.']
-        ],
-        thought: ['Found subscribe() with no takeUntilDestroyed, no take(1), no first(), and no manual unsubscribe field.', '+18%'],
-        metrics: { renders: 24, changeDetectionMs: 61, subscriptionsOpen: 1, domMutations: 118, apiCalls: 3 }
-      },
-      {
-        rule: 'null',
-        timeline: ['done', 'Checking null safety', 'Template reads were compared with types, route resolvers, @if guards, and optional chaining.'],
-        file: 'src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-info.component.html',
-        line: 231,
-        code: [
-          [226, '<section *ngIf="assignment as data">', 'good'],
-          [227, '  <h3>{{ data.name }}</h3>', 'good'],
-          [228, '  <span>{{ data.owner?.fullName }}</span>', 'good'],
-          [229, '</section>', ''],
-          [230, '<button (click)="close()">Close</button>', ''],
-          [231, '<app-history [items]="history$ | async"></app-history>', 'good']
-        ],
-        related: [
-          ['schedule-assignment.resolver.ts', 'Opened because route may guarantee data.'],
-          ['schedule-assignment-info.component.ts', 'Opened to inspect field types.'],
-          ['route.config.ts', 'Opened to verify resolver mapping.']
-        ],
-        thought: ['Possible null issue was skipped because resolver and template guard both prove the value exists.', 'skip'],
-        skip: { text: 'Null warning skipped: @if/*ngIf guard and optional chaining already protect the binding.', tag: 'guarded' },
-        metrics: { renders: 31, changeDetectionMs: 72, subscriptionsOpen: 1, domMutations: 156, apiCalls: 3 }
-      },
-      {
-        rule: 'trackby',
-        timeline: ['done', 'Checking Angular list rendering', 'ngFor/@for blocks checked for trackBy or modern track expressions.'],
-        file: 'src/app/features/leads/lead-list/lead-list.component.html',
-        line: 44,
-        code: [
-          [40, '@for (lead of leads(); track lead.id) {', 'good'],
-          [41, '  <app-lead-row [lead]="lead"></app-lead-row>', 'good'],
-          [42, '} @empty {', ''],
-          [43, '  <p>No leads yet</p>', ''],
-          [44, '}', '']
-        ],
-        related: [
-          ['lead-list.component.ts', 'Opened to verify leads() is a signal.'],
-          ['lead-row.component.ts', 'Opened because list renders this component.'],
-          ['lead.model.ts', 'Opened to verify stable id field.']
-        ],
-        thought: ['List rendering is safe here. @for already has a track expression, so no comment will be posted.', 'clean'],
-        skip: { text: 'trackBy issue skipped: modern @for track expression already exists.', tag: 'clean' },
-        metrics: { renders: 36, changeDetectionMs: 80, subscriptionsOpen: 1, domMutations: 186, apiCalls: 3 }
-      },
-      {
-        rule: 'template',
-        timeline: ['running', 'Checking template hot paths', 'Template method calls are compared with OnPush, signals, and render counts.'],
-        file: 'src/app/features/dashboard/dashboard-summary/dashboard-summary.component.html',
-        line: 22,
-        code: [
-          [18, '<section class="summary">', ''],
-          [19, '  <span>{{ getTotal() }}</span>', 'hot'],
-          [20, '  <span>{{ statusLabel() }}</span>', 'hot'],
-          [21, '</section>', ''],
-          [22, '<!-- summary-only after OnPush/runtime check -->', 'good']
-        ],
-        related: [
-          ['dashboard-summary.component.ts', 'Opened to inspect OnPush and signal usage.'],
-          ['dashboard-store.service.ts', 'Opened because template reads store state.'],
-          ['dashboard-summary.component.spec.ts', 'Opened to compare expected render behavior.']
-        ],
-        thought: ['Template method call found, but OnPush plus signal input keeps rerender count low. Keeping it out of Azure comments.', 'summary'],
-        skip: { text: 'Template-method finding kept summary-only because runtime render count stayed below threshold.', tag: 'summary' },
-        metrics: { renders: 39, changeDetectionMs: 86, subscriptionsOpen: 1, domMutations: 201, apiCalls: 4 }
-      },
-      {
-        rule: 'subscription',
-        timeline: ['done', 'Checking modal lifecycle subscriptions', 'Modal onHidden streams checked against component destroy and single-use modal scope.'],
-        file: 'src/app/features/global-config/settings/module/schedule-assignment/schedule-assignment-bulk-delete/schedule-assignment-bulk-delete.component.ts',
-        line: 70,
-        code: [
-          [66, 'const modalRef = this.modalService.show(ConfirmComponent);', ''],
-          [67, 'modalRef.onHidden.subscribe(() => {', 'bad'],
-          [68, '  this.reload();', ''],
-          [69, '});', ''],
-          [70, '// summary-only: modal lifetime uncertain', 'hot']
-        ],
-        related: [
-          ['confirm.component.ts', 'Opened to inspect modal close path.'],
-          ['schedule-assignment.component.ts', 'Opened because parent creates modal.'],
-          ['ngx-bootstrap modal typings', 'Opened to check onHidden completion behavior.']
-        ],
-        thought: ['Modal stream has possible leak shape, but confidence stayed below inline threshold because modal completion behavior is unclear.', 'summary'],
-        skip: { text: 'Modal onHidden finding kept summary-only: library may complete the stream after close.', tag: 'summary' },
-        metrics: { renders: 40, changeDetectionMs: 94, subscriptionsOpen: 1, domMutations: 226, apiCalls: 4 }
-      },
-      {
-        rule: 'subscription',
-        timeline: ['done', 'Runtime validation', 'Playwright navigation confirmed one subscription stayed open after component destroy.'],
-        thought: ['Runtime trace confirmed the static finding. Confidence increased enough for an inline Azure comment.', '+22%'],
-        comment: {
-          type: 'warn',
-          title: 'Subscription is not cleaned up',
-          file: 'automation-settings.component.ts',
-          line: 147,
-          confidence: 92,
-          body: 'This subscription is not cleaned up.<br>It can keep running after this component is gone.<br>Please add <span class="mono">takeUntilDestroyed</span> before <span class="mono">subscribe()</span>.',
-          why: 'Static AST found no cleanup. Runtime trace kept 2 subscriptions open after navigation.',
-          duplicates: ['automation-settings.component.ts:73', 'app.component.ts:140 summary-only', 'schedule-assignment.component.ts:675 low confidence']
-        },
-        metrics: { renders: 42, changeDetectionMs: 118, subscriptionsOpen: 2, domMutations: 276, apiCalls: 6 }
-      },
-      {
-        rule: 'indexeddb',
-        timeline: ['done', 'Checking IndexedDB cache flow', 'Writes and reads checked for non-awaited stale-cache races.'],
-        file: 'src/app/cache/lead-cache.service.ts',
-        line: 88,
-        code: [
-          [84, 'async saveLead(lead: Lead) {', ''],
-          [85, '  await this.store.put(lead);', 'good'],
-          [86, '  return this.store.get(lead.id);', 'good'],
-          [87, '}', ''],
-          [88, '// no stale read: write is awaited first', 'good']
-        ],
-        related: [
-          ['lead-cache.service.ts', 'Opened because IndexedDB write/read pattern matched.'],
-          ['lead.model.ts', 'Opened to inspect key field.']
-        ],
-        thought: ['IndexedDB pattern is safe. The write is awaited before the read, so no comment is created.', 'clean'],
-        skip: { text: 'IndexedDB race skipped: write promise is awaited before reading the same store.', tag: 'safe' },
-        metrics: { renders: 43, changeDetectionMs: 119, subscriptionsOpen: 2, domMutations: 282, apiCalls: 6 }
-      },
-      {
-        rule: 'subscription',
-        timeline: ['done', 'Posting Azure comments', 'Only high-confidence, changed-line, non-duplicate findings are posted inline.'],
-        thought: ['Final output: 2 inline comments, 15 lower-confidence notes in PR summary, and multiple skipped checks explained.', 'done'],
-        metrics: { renders: 43, changeDetectionMs: 119, subscriptionsOpen: 2, domMutations: 282, apiCalls: 6 }
-      }
-    ];
-
-    const streamFrames = liveFrames.concat(analysisScope.map((item, index) => makeFileSweepFrame(item, index)));
 
     function renderLiveFrame(frame) {
       liveState.activeRule = frame.rule || liveState.activeRule;
@@ -1160,7 +920,7 @@
       analysisScope = (files || []).map((item) => [
         item.file,
         item.reason || 'changed file from backend stream',
-        item.rule || ruleForFile(item.file)
+        item.rule || 'review'
       ]).filter(([file]) => Boolean(file));
       liveState.fileIndex = 0;
       liveState.phaseIndex = 0;
@@ -1176,193 +936,6 @@
       updateHeader();
     }
 
-    function ruleForFile(file) {
-      if (String(file).endsWith('.html')) return 'template';
-      if (String(file).includes('cache')) return 'indexeddb';
-      if (String(file).includes('service')) return 'network';
-      if (String(file).includes('store') || String(file).includes('state')) return 'state';
-      return 'diff';
-    }
-
-    function makeFileSweepFrame(item, index) {
-      const [file, why, rule] = item;
-      const line = 18 + (index % 90);
-      return {
-        rule,
-        timeline: ['running', `Scanning ${shortFile(file)}`, `${why}. Rule pack: ${rule}. Related context and changed-line anchors are checked before any comment.`],
-        file,
-        line,
-        code: codeSampleFor(file, rule, line),
-        related: relatedFor(file, rule),
-        thought: [`Checking ${shortFile(file)} for ${rule} evidence. This file is in the changed-file queue, so it is visible before the AI moves on.`, 'scan'],
-        metrics: {
-          renders: 12 + (index * 3) % 55,
-          changeDetectionMs: 30 + (index * 7) % 130,
-          subscriptionsOpen: rule === 'subscription' ? index % 3 : liveState.metrics.subscriptionsOpen,
-          domMutations: 70 + (index * 19) % 320,
-          apiCalls: 1 + (index % 8),
-        },
-      };
-    }
-
-    function makeSequentialFrame() {
-      if (liveState.fileIndex >= analysisScope.length) {
-        return {
-          rule: 'complete',
-          timeline: ['done', 'Review complete', `${analysisScope.length} changed files completed. No file is reopened unless a later finding needs dependency revalidation.`],
-          thought: ['All changed files were processed once in strict order. Duplicate findings are grouped before Azure posting.', 'done'],
-          metrics: liveState.metrics,
-          finished: true,
-        };
-      }
-
-      const item = analysisScope[liveState.fileIndex];
-      const phase = pipelinePhases[liveState.phaseIndex];
-      const [file, why, rule] = item;
-      const [phaseId, phaseTitle] = phase;
-      liveState.displayPhaseIndex = liveState.phaseIndex;
-      const line = 18 + ((liveState.fileIndex * 7 + liveState.phaseIndex * 3) % 90);
-      const isLastPhase = liveState.phaseIndex === pipelinePhases.length - 1;
-      const frame = {
-        rule,
-        file,
-        line,
-        code: codeSampleFor(file, rule, line),
-        related: phaseId === 'context' || phaseId === 'runtime' || phaseId === 'findings'
-          ? relatedFor(file, rule)
-          : [[shortFile(file), 'Current changed file only. Related files are opened only when this phase needs proof.']],
-        timeline: [isLastPhase ? 'done' : 'running', phaseTitle, `${shortFile(file)}: ${why}. Phase ${liveState.phaseIndex + 1}/${pipelinePhases.length}.`],
-        thought: [thinkingForPhase(file, rule, phaseId), isLastPhase ? 'done' : 'live'],
-        metrics: {
-          renders: 10 + (liveState.fileIndex * 3 + liveState.phaseIndex) % 58,
-          changeDetectionMs: 22 + (liveState.fileIndex * 9 + liveState.phaseIndex * 4) % 140,
-          subscriptionsOpen: rule === 'subscription' && phaseId === 'runtime' ? 1 + (liveState.fileIndex % 2) : Math.max(0, liveState.metrics.subscriptionsOpen || 0),
-          domMutations: 50 + (liveState.fileIndex * 17 + liveState.phaseIndex * 11) % 360,
-          apiCalls: 1 + ((liveState.fileIndex + liveState.phaseIndex) % 9),
-        },
-        markComplete: isLastPhase,
-      };
-
-      if (phaseId === 'findings') {
-        const outcome = findingOutcomeFor(file, rule);
-        if (outcome.comment) frame.comment = outcome.comment;
-        if (outcome.skip) frame.skip = outcome.skip;
-      }
-
-      liveState.phaseIndex++;
-      if (liveState.phaseIndex >= pipelinePhases.length) {
-        liveState.phaseIndex = 0;
-        liveState.fileIndex++;
-      }
-      return frame;
-    }
-
-    function thinkingForPhase(file, rule, phaseId) {
-      const name = shortFile(file);
-      const map = {
-        diff: `Checking changed lines in ${name}. Deleted lines are ignored for inline comments.`,
-        queue: `${name} is now the only active file. Other changed files wait in pending queue.`,
-        ast: `Building TypeScript symbols for ${name}. This catches typing, async, DI, and lifecycle issues.`,
-        template: `Checking Angular template and component state together. This avoids null-check false positives.`,
-        context: `Opening only files needed to understand ${name}. No broad repository scan here.`,
-        runtime: `Running runtime validation only if static evidence needs proof for ${rule}.`,
-        findings: `Creating findings for all issue categories, then dropping low-confidence noise.`,
-        dedup: `Checking if this issue already exists in another file. Only the best location gets a comment.`,
-        stream: `Streaming transparent status for ${name} to the UI.`,
-        complete: `${name} completed. Moving to the next changed file in order.`,
-      };
-      return map[phaseId] || `Checking ${name}.`;
-    }
-
-    function findingOutcomeFor(file, rule) {
-      if (file.endsWith('automation-settings.component.ts')) {
-        return {
-          comment: {
-            type: 'warn',
-            file: shortFile(file),
-            line: 147,
-            confidence: 92,
-            body: 'This subscription is not cleaned up.<br>It can keep running after this component is gone.<br>Please add <span class="mono">takeUntilDestroyed</span> before <span class="mono">subscribe()</span>.',
-            why: 'Static AST found no cleanup. Runtime trace kept 2 subscriptions open after navigation.',
-            duplicates: ['automation-settings.component.ts:73', 'app.component.ts:140 summary-only', 'schedule-assignment.component.ts:675 low confidence'],
-          },
-        };
-      }
-      if (rule === 'null') return { skip: { text: `${shortFile(file)} null issue skipped: guard, resolver, or optional chaining already proves safety.`, tag: 'guarded' } };
-      if (rule === 'trackby') return { skip: { text: `${shortFile(file)} trackBy issue skipped: stable track expression or small list confirmed.`, tag: 'clean' } };
-      if (rule === 'indexeddb') return { skip: { text: `${shortFile(file)} cache race skipped: write is awaited before read.`, tag: 'safe' } };
-      return { skip: { text: `${shortFile(file)} checked for ${rule}. No high-confidence inline comment needed.`, tag: 'checked' } };
-    }
-
-    function codeSampleFor(file, rule, line) {
-      if (file.endsWith('.html')) {
-        if (rule === 'trackby') {
-          return [
-            [line - 2, '@for (row of rows(); track row.id) {', 'good'],
-            [line - 1, '  <app-row [row]="row"></app-row>', 'good'],
-            [line, '} @empty {', ''],
-            [line + 1, '  <p>No data</p>', ''],
-          ];
-        }
-        if (rule === 'null') {
-          return [
-            [line - 2, '<section *ngIf="model as data">', 'good'],
-            [line - 1, '  {{ data.name }}', 'good'],
-            [line, '  {{ data.owner?.fullName }}', 'good'],
-            [line + 1, '</section>', ''],
-          ];
-        }
-        return [
-          [line - 2, '<section class="view">', ''],
-          [line - 1, '  {{ vm.title }}', 'good'],
-          [line, '  <button (click)="save()">Save</button>', ''],
-          [line + 1, '</section>', ''],
-        ];
-      }
-      if (rule === 'subscription') {
-        return [
-          [line - 2, 'ngOnInit() {', ''],
-          [line - 1, '  this.stream$', 'hot'],
-          [line, '    .subscribe(value => this.value = value);', 'bad'],
-          [line + 1, '}', ''],
-        ];
-      }
-      if (rule === 'indexeddb') {
-        return [
-          [line - 2, 'async save(item: Item) {', ''],
-          [line - 1, '  await this.store.put(item);', 'good'],
-          [line, '  return this.store.get(item.id);', 'good'],
-          [line + 1, '}', ''],
-        ];
-      }
-      if (rule === 'network') {
-        return [
-          [line - 2, 'load() {', ''],
-          [line - 1, '  return this.http.get(url);', 'hot'],
-          [line, '}', ''],
-          [line + 1, '// checked for duplicate calls', 'good'],
-        ];
-      }
-      return [
-        [line - 2, 'export class ReviewTarget {', ''],
-        [line - 1, '  readonly state = signal(null);', 'good'],
-        [line, '  readonly vm = computed(() => this.state());', 'good'],
-        [line + 1, '}', ''],
-      ];
-    }
-
-    function relatedFor(file, rule) {
-      const base = shortFile(file);
-      const related = [
-        [base, 'Current changed file under review.'],
-        [`${rule}.evidence`, `Opened to verify ${rule} proof.`],
-        ['diff-map', 'Opened to confirm this line exists in the PR diff.'],
-      ];
-      if (file.endsWith('.ts')) related.push([base.replace('.ts', '.html'), 'Related template checked with TypeScript state.']);
-      if (file.endsWith('.html')) related.push([base.replace('.html', '.ts'), 'Related component checked with template usage.']);
-      return related;
-    }
-
     function upsertTimeline(step) {
       const found = timeline.find((item) => item[1] === step[1]);
       if (found) {
@@ -1376,12 +949,16 @@
 
     function renderFile(frame) {
       document.querySelector('.codebar').textContent = `${frame.file} · line ${frame.line}`;
-      document.querySelector('.code pre').innerHTML = frame.code.map(([line, text, cls]) => (
+      const rows = Array.isArray(frame.code) ? frame.code : [];
+      document.querySelector('.code pre').innerHTML = rows.length ? rows.map(([line, text, cls]) => (
         `<div class="line ${cls || ''}"><span class="ln">${line}</span><span>${escapeHtml(text)}</span></div>`
-      )).join('');
-      document.querySelector('.related').innerHTML = frame.related.map(([file, reason]) => (
+      )).join('') : `
+        <div class="line"><span class="ln">--</span><span>Waiting for backend code rows for this file.</span></div>`;
+      const relatedRows = Array.isArray(frame.related) ? frame.related : [];
+      document.querySelector('.related').innerHTML = relatedRows.length ? relatedRows.map(([file, reason]) => (
         `<div class="mini"><strong>${escapeHtml(file)}</strong><span>${escapeHtml(reason)}</span></div>`
-      )).join('');
+      )).join('') : `
+        <div class="mini"><strong>No related files sent yet</strong><span>The backend has not sent related-file context for this event.</span></div>`;
     }
 
     function renderEmptyFileAnalysis(message) {
@@ -1444,17 +1021,21 @@
 
     function categoryMatchesRule(name, rule) {
       const text = name.toLowerCase();
-      return (rule === 'subscription' && (text.includes('subscription') || text.includes('rxjs') || text.includes('lifecycle') || text.includes('event')))
-        || (rule === 'rxjs' && (text.includes('rxjs') || text.includes('async') || text.includes('race') || text.includes('repeated')))
+      return ((rule === 'syntax' || rule === 'syntax-ast' || rule === 'null' || rule === 'typing') && (text.includes('null') || text.includes('optional') || text.includes('crash') || text.includes('typing') || text.includes('any') || text.includes('unused import') || text.includes('lifecycle')))
+        || ((rule === 'async' || rule === 'async-flow' || rule === 'network') && (text.includes('promise') || text.includes('async') || text.includes('error') || text.includes('api') || text.includes('race') || text.includes('loading') || text.includes('repeated api') || text.includes('duplicate request')))
+        || (rule === 'rxjs' && (text.includes('rxjs') || text.includes('subscription') || text.includes('async') || text.includes('race') || text.includes('repeated')))
         || (rule === 'runtime' && (text.includes('runtime') || text.includes('crash') || text.includes('bottleneck') || text.includes('render')))
         || (rule === 'null' && (text.includes('null') || text.includes('typing') || text.includes('runtime crash')))
         || (rule === 'trackby' && (text.includes('trackby') || text.includes('dom') || text.includes('rerender')))
         || (rule === 'template' && (text.includes('template') || text.includes('change detection') || text.includes('onpush') || text.includes('performance')))
+        || (rule === 'performance' && (text.includes('performance') || text.includes('loop') || text.includes('dom') || text.includes('rerender') || text.includes('calculation') || text.includes('synchronous')))
         || (rule === 'indexeddb' && (text.includes('indexeddb') || text.includes('cache') || text.includes('race')))
-        || (rule === 'network' && (text.includes('api') || text.includes('n+1') || text.includes('loading')))
         || (rule === 'state' && (text.includes('state') || text.includes('store') || text.includes('signal')))
-        || (rule === 'forms' && text.includes('form'))
-        || (rule === 'security' && text.includes('security'));
+        || (rule === 'forms' && (text.includes('form') || text.includes('validation') || text.includes('user experience')))
+        || (rule === 'architecture' && (text.includes('architecture') || text.includes('service separation') || text.includes('dependency injection') || text.includes('circular') || text.includes('large component')))
+        || (rule === 'maintainability' && (text.includes('duplicate logic') || text.includes('dead code') || text.includes('unused') || text.includes('large method') || text.includes('maintain')))
+        || (rule === 'security' && (text.includes('security') || text.includes('xss') || text.includes('ssr') || text.includes('hydration')))
+        || (rule === 'scalability' && (text.includes('scalability') || text.includes('memory') || text.includes('growth') || text.includes('cache') || text.includes('bottleneck') || text.includes('state inconsistency')));
     }
 
     function renderScope() {
@@ -1515,6 +1096,13 @@
       ];
       document.getElementById('metrics').innerHTML = entries.map((m) => `
         <div class="metric"><b>${m[0]}</b><span>${m[1]}</span></div>`).join('');
+      window.runtimeSeries = [
+        Number(liveState.metrics.renders || 0),
+        Number(liveState.metrics.changeDetectionMs || 0),
+        Number(liveState.metrics.domMutations || 0),
+        Number(liveState.metrics.apiCalls || 0),
+        Number(liveState.metrics.subscriptionsOpen || 0),
+      ].filter((value) => value > 0);
       repaintHeatmap(liveState.metrics.domMutations || 0);
     }
 
@@ -1555,7 +1143,6 @@
         ? `file ${Math.min(liveState.fileIndex + 1, analysisScope.length)}/${analysisScope.length} · ${liveState.currentPhaseTitle || `phase ${(liveState.displayPhaseIndex ?? liveState.phaseIndex) + 1}/${pipelinePhases.length}`}`
         : liveState.currentPhaseTitle || 'waiting for changed-file queue';
       if (liveState.streamStatus === 'connected') return { dot: '', label: 'Live SSE connected', detail: fileLabel };
-      if (liveState.streamStatus === 'demo') return { dot: 'demo', label: 'Demo stream running', detail: fileLabel };
       if (liveState.streamStatus === 'complete') return { dot: '', label: 'Review complete', detail: `${analysisScope.length}/${analysisScope.length} files processed` };
       if (liveState.streamStatus === 'offline') return { dot: 'offline', label: 'Live server disconnected', detail: 'UI stopped. No fake fallback.' };
       return { dot: 'idle', label: 'Connecting to live review', detail: liveState.streamMessage || 'Waiting for SSE' };
@@ -1604,12 +1191,10 @@
       liveState.fileIndex = 0;
       liveState.phaseIndex = 0;
       liveState.displayPhaseIndex = 0;
-      window.reviewGraphMode = 'idle';
       timeline.length = 0;
       timeline.push(
         [status === 'offline' ? 'skipped' : 'running', status === 'offline' ? 'Live stream disconnected' : 'Waiting for live review', message],
-        ['pending', 'PR diff parsing', 'Waiting for backend event.'],
-        ['pending', 'Queue changed files', 'Waiting for backend event.']
+        ['pending', 'Changed file queue', 'Waiting for backend event.']
       );
       thoughts.length = 0;
       thoughts.push([message, status === 'offline' ? 'offline' : 'wait']);
@@ -1625,47 +1210,10 @@
       draw();
     }
 
-    function startLocalStream() {
-      if (localStreamTimer) clearInterval(localStreamTimer);
-      if (activeEventSource) activeEventSource.close();
-      liveState.streamMode = 'demo';
-      liveState.streamStatus = 'demo';
-      liveState.streamMessage = 'Local demo stream is running because ?demo=1 was provided.';
-      analysisScope = demoAnalysisScope.slice();
-      liveState.activeFile = analysisScope[0][0];
-      liveState.comments = [];
-      liveState.skips = demoSkips.slice();
-      liveState.checkedFiles.clear();
-      liveState.completedRules.clear();
-      liveState.completedFiles.clear();
-      liveState.fileIndex = 0;
-      liveState.phaseIndex = 0;
-      liveState.displayPhaseIndex = 0;
-      window.reviewGraphMode = 'demo';
-      renderRuleBoard();
-      renderScope();
-      renderComments();
-      renderLiveMetrics();
-      renderSkips();
-      addThought(['Demo mode is using local sample events. Real Azure data is not connected.', 'demo']);
-      updateHeader();
-      localStreamTimer = setInterval(() => {
-        const frame = makeSequentialFrame();
-        renderLiveFrame(frame);
-        liveState.pointer++;
-        if (frame.finished) {
-          clearInterval(localStreamTimer);
-          localStreamTimer = null;
-          liveState.streamStatus = 'complete';
-          updateHeader();
-        }
-      }, 850);
-    }
-
     function streamUrlFromPage() {
       const params = new URLSearchParams(location.search);
       if (params.get('events')) return params.get('events');
-      const jobId = params.get('jobId') || 'demo';
+      const jobId = params.get('jobId') || 'cli-live';
       const port = params.get('port') || '8081';
       if (location.protocol === 'file:') return `http://localhost:${port}/api/reviews/${encodeURIComponent(jobId)}/events`;
       const apiBase = params.get('api');
@@ -1674,12 +1222,7 @@
     }
 
     function bootLiveStream() {
-      const params = new URLSearchParams(location.search);
-      if (params.get('demo') === '1') {
-        startLocalStream();
-        return;
-      }
-      renderIdleUi('Waiting for backend SSE. Open through the app server or pass ?events=<sse-url>. Use ?demo=1 only for sample data.');
+      renderIdleUi('Waiting for backend SSE. Open through the app server or pass ?events=<sse-url>.');
       const streamUrl = streamUrlFromPage();
       if (!streamUrl) {
         renderIdleUi('This file is open directly from disk. No live server is connected, so the review is paused.', 'offline');
@@ -1738,7 +1281,7 @@
             rule: data.rule || 'diff',
             file: data.file,
             line: data.line || 1,
-            code: data.code || liveFrames[0].code,
+            code: data.code || [],
             related: (data.related || []).map((r) => [r.file, r.reason])
           });
         });
@@ -1761,7 +1304,7 @@
           received = true;
           const data = JSON.parse(e.data);
           renderLiveFrame({
-            rule: data.rule || liveState.activeRule || 'diff',
+            rule: data.rule || liveState.activeRule || 'review',
             comment: {
               type: data.severity || 'warn',
               file: data.file,
@@ -1780,7 +1323,7 @@
           liveState.streamMode = 'offline';
           liveState.streamStatus = 'offline';
           liveState.streamMessage = received
-            ? 'Backend stream stopped. UI is paused and will not use demo data.'
+            ? 'Backend stream stopped. UI is paused until real backend data returns.'
             : 'Backend stream was not found. Retrying the real SSE connection.';
           upsertTimeline(['skipped', 'Live stream disconnected', liveState.streamMessage]);
           addThought([liveState.streamMessage, 'offline']);
@@ -1788,7 +1331,7 @@
           setTimeout(bootLiveStream, 2500);
         };
       } catch {
-        renderIdleUi('Could not open SSE stream. UI is paused and will not use demo data.', 'offline');
+        renderIdleUi('Could not open SSE stream. UI is paused until real backend data is available.', 'offline');
       }
     }
 

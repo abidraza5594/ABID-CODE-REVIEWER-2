@@ -15,7 +15,7 @@ export interface MistralClientOptions {
   baseUrl?: string;
   /** Per-tenant audit tag. */
   customerId?: string;
-  /** Default chat model name, e.g. 'mistral-large-latest'. */
+  /** Default chat model name, e.g. 'devstral-2512'. */
   model: string;
   /** Network fetch implementation; tests inject a mock. */
   fetch?: typeof globalThis.fetch;
@@ -29,6 +29,8 @@ export interface ChatMessage {
 }
 
 export interface ChatRequest {
+  /** Optional per-prompt model override. Defaults to the client model. */
+  model?: string;
   messages: ChatMessage[];
   /** Optional JSON schema enforced server-side. */
   responseFormat?: 'json_object' | 'text';
@@ -77,7 +79,7 @@ export class MistralClient {
     // or `user` — those caused 422 "extra_forbidden" responses from the API.
     // The audit trail (customerId) is captured in our own logs, not the request.
     const body: Record<string, unknown> = {
-      model: this.opts.model,
+      model: req.model ?? this.opts.model,
       messages: req.messages,
       temperature: req.temperature ?? 0.1,
       max_tokens: req.maxTokens ?? 1024,

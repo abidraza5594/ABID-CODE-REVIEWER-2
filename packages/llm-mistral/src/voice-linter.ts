@@ -14,6 +14,10 @@ const BANNED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\brefactor for maintainability\b/i, reason: 'banned: vague "refactor for maintainability"' },
   { pattern: /\bcould be improved\b/i, reason: 'banned: vague "could be improved"' },
   { pattern: /\b(may|might) be (a |an )?potential\b/i, reason: 'banned: "may be a potential"' },
+  { pattern: /\barchitectural complexity\b/i, reason: 'banned: hard phrase "architectural complexity"' },
+  { pattern: /\bstate inconsistency\b/i, reason: 'banned: hard phrase "state inconsistency"' },
+  { pattern: /\blifecycle retention\b/i, reason: 'banned: hard phrase "lifecycle retention"' },
+  { pattern: /\bruntime invariant\b/i, reason: 'banned: hard phrase "runtime invariant"' },
   // URLs except markdown-fenced code blocks indicate possible prompt-injection escapes.
   { pattern: /https?:\/\//, reason: 'banned: URL in output' },
 ];
