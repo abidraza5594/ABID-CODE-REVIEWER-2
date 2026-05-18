@@ -1,5 +1,6 @@
 import type { Evidence, Guarantee } from '@abid/core';
 import type { RawFinding, RuleContext } from '../rule-context.js';
+import { looksLikeFiniteApiObservable } from './typescript-engineering.js';
 
 /**
  * angular/subscription-leak
@@ -33,6 +34,7 @@ export const subscriptionLeakRule = {
           // Cheap acceptance paths first.
           if (sub.hasTakeUntil) continue;
           if (looksLikeHttpClient(sub.receiverText)) continue;
+          if (looksLikeFiniteApiObservable(sub.receiverText)) continue;
 
           // Manual cleanup check: was the result assigned to a field that
           // ngOnDestroy unsubscribes from?

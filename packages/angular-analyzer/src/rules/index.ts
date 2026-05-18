@@ -4,3 +4,10 @@ export { templateMethodCallRule } from './template-method-call.js';
 export { trackByMissingRule } from './trackby-missing.js';
 export { signalOverTriggerRule } from './signal-over-trigger.js';
 export { indexedDbStaleReadRule } from './indexeddb-stale-read.js';
+export {
+  deprecatedToPromiseRule,
+  subscribeMissingErrorHandlerRule,
+  nestedSubscribeRule,
+  formControlGetNullRule,
+  eventListenerLeakRule,
+} from './typescript-engineering.js';

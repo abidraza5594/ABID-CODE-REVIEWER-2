@@ -152,6 +152,15 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
     findings = findings.map((f) =>
       applyScore(f, { rulePrecision: rulePrecisionOf(f.ruleId), evidence: f.evidence, guarantees: f.guarantees }),
     );
+    const changedFileOrder = new Map(changedFiles.map((file, index) => [file.newPath, index]));
+    findings = findings.slice().sort((a, b) => {
+      const fileDelta = (changedFileOrder.get(a.location.file) ?? Number.MAX_SAFE_INTEGER) -
+        (changedFileOrder.get(b.location.file) ?? Number.MAX_SAFE_INTEGER);
+      if (fileDelta !== 0) return fileDelta;
+      const lineDelta = a.location.startLine - b.location.startLine;
+      if (lineDelta !== 0) return lineDelta;
+      return a.ruleId.localeCompare(b.ruleId);
+    });
 
     const mistral = new MistralClient({
       apiKey: requiredEnv('MISTRAL_API_KEY'),
@@ -168,37 +177,54 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
     step(`Asking Mistral to filter false positives (${findings.length} call(s))`);
     await ui({ type: 'timeline', title: 'Asking Mistral to filter false positives', detail: `${findings.length} finding(s) are being checked for false positives.`, status: 'running', rule: 'diff' });
     let filteredCount = 0;
+    const totalFindings = findings.length;
     const filterStartedAt = Date.now();
     const filterHeartbeat = setInterval(() => {
       const seconds = Math.round((Date.now() - filterStartedAt) / 1000);
       void ui({
         type: 'timeline',
-        title: `Mistral filter progress ${filteredCount}/${findings.length}`,
-        detail: `${filteredCount}/${findings.length} complete after ${seconds}s. Still waiting for Mistral responses.`,
+        title: `Mistral filter progress ${filteredCount}/${totalFindings}`,
+        detail: `${filteredCount}/${totalFindings} complete after ${seconds}s. Still waiting for Mistral responses.`,
         status: 'running',
         rule: 'diff',
       });
     }, 10_000);
-    findings = await Promise.all(
-      findings.map(async (f, index) => {
+    try {
+      const filteredFindings: Finding[] = [];
+      for (let index = 0; index < totalFindings; index++) {
+        const f = findings[index]!;
         const label = `${f.location.file}:${f.location.startLine}`;
+        const snippet = await readSnippet(workdir, f.location.file, f.location.startLine, 12);
+        await ui({
+          type: 'file',
+          title: `Mistral filter ${index + 1}/${totalFindings}`,
+          file: f.location.file,
+          line: f.location.startLine,
+          rule: f.ruleId,
+          code: snippetToCodeRows(snippet, f.location.startLine),
+          related: [
+            { file: f.location.file, reason: `Current finding ${index + 1}/${totalFindings} under false-positive review.` },
+            { file: 'Mistral filter', reason: 'Checking evidence, guarantees, and likely false positives for this exact line.' },
+          ],
+        });
+
         if (classify(f.ruleId, f.confidence) === 'drop') {
           filteredCount++;
           await ui({
             type: 'reasoning',
-            title: `Mistral filter ${filteredCount}/${findings.length}`,
+            title: `Mistral filter ${filteredCount}/${totalFindings}`,
             detail: `${label} skipped before LLM because confidence is below drop floor.`,
             rule: f.ruleId,
           });
-          return f;
+          filteredFindings.push(f);
+          continue;
         }
         await ui({
           type: 'reasoning',
-          title: `Mistral filter ${index + 1}/${findings.length}`,
+          title: `Mistral filter ${index + 1}/${totalFindings}`,
           detail: `Checking false-positive proof for ${label}.`,
           rule: f.ruleId,
         });
-        const snippet = await readSnippet(workdir, f.location.file, f.location.startLine, 12);
         try {
           const filter = await filterFinding(f, { file: f.location.file, snippet }, { mistral, prompts });
           const scored = applyScore(f, {
@@ -211,28 +237,30 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
           filteredCount++;
           await ui({
             type: 'timeline',
-            title: `Mistral filter progress ${filteredCount}/${findings.length}`,
+            title: `Mistral filter progress ${filteredCount}/${totalFindings}`,
             detail: `${label}: agreement ${filter.agreement.toFixed(2)}. ${filter.reason}`,
-            status: filteredCount === findings.length ? 'done' : 'running',
+            status: filteredCount === totalFindings ? 'done' : 'running',
             rule: f.ruleId,
           });
-          return scored;
+          filteredFindings.push(scored);
         } catch (err) {
           // If Mistral fails for one finding, keep the unfiltered score; don't drop.
           detail(kleur.yellow(`! filter failed for ${f.ruleId}: ${(err as Error).message.slice(0, 80)}`));
           filteredCount++;
           await ui({
             type: 'timeline',
-            title: `Mistral filter progress ${filteredCount}/${findings.length}`,
+            title: `Mistral filter progress ${filteredCount}/${totalFindings}`,
             detail: `${label}: filter failed, keeping static score. ${(err as Error).message.slice(0, 120)}`,
-            status: filteredCount === findings.length ? 'done' : 'running',
+            status: filteredCount === totalFindings ? 'done' : 'running',
             rule: f.ruleId,
           });
-          return f;
+          filteredFindings.push(f);
         }
-      }),
-    );
-    clearInterval(filterHeartbeat);
+      }
+      findings = filteredFindings;
+    } finally {
+      clearInterval(filterHeartbeat);
+    }
 
     await ui({ type: 'timeline', title: 'Mistral filter complete', detail: `${findings.length} finding(s) checked for false positives.`, status: 'done', rule: 'diff' });
 

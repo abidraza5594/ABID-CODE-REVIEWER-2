@@ -1098,9 +1098,20 @@
       liveState.activeRule = frame.rule || liveState.activeRule;
       if (frame.rule) liveState.completedRules.add(frame.rule);
       if (frame.file) {
+        const previousActiveFile = liveState.activeFile;
+        if (previousActiveFile && previousActiveFile !== frame.file) {
+          liveState.completedFiles.add(previousActiveFile);
+        }
         ensureScopeFile(frame.file, frame.rule);
         liveState.activeFile = frame.file;
+        liveState.completedFiles.delete(frame.file);
+        const queuedIndex = analysisScope.findIndex(([knownFile]) => knownFile === frame.file);
+        if (queuedIndex >= 0) liveState.fileIndex = queuedIndex;
         liveState.checkedFiles.add(frame.file);
+        if (frame.title) {
+          liveState.currentPhaseTitle = frame.title;
+          liveState.currentPhaseDetail = `${frame.file}:${frame.line || 1} is being checked now.`;
+        }
       }
       if (frame.timeline) {
         liveState.currentPhaseTitle = frame.timeline[1];
@@ -1701,6 +1712,7 @@
           received = true;
           const data = JSON.parse(e.data);
           renderLiveFrame({
+            title: data.title || 'Current file',
             rule: data.rule || 'diff',
             file: data.file,
             line: data.line || 1,
