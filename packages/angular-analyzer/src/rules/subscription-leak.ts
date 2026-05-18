@@ -31,6 +31,8 @@ export const subscriptionLeakRule = {
     for (const comp of ctx.changedComponents) {
       for (const m of comp.methods) {
         for (const sub of m.subscribeCalls) {
+          if (!isAddedLine(ctx, comp.tsFile, sub.location.startLine)) continue;
+
           // Cheap acceptance paths first.
           if (sub.hasTakeUntil) continue;
           if (looksLikeHttpClient(sub.receiverText)) continue;
@@ -116,4 +118,8 @@ function hasManualCleanup(
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isAddedLine(ctx: RuleContext, file: string, line: number): boolean {
+  return ctx.diff.lineMap(file)?.addedNewLines.has(line) ?? false;
 }

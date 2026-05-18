@@ -23,6 +23,7 @@ export type DispositionReason =
   | 'voice-lint-failed'
   | 'duplicate-of'
   | 'silent-mode'
+  | 'not-on-added-line'
   | 'rule-disabled-for-repo'
   | 'rate-limited'
   | 'sibling';

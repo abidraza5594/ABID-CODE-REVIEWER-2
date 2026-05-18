@@ -28,6 +28,7 @@ export const trackByMissingRule = {
         const analysis = parseTemplateRef(tplRef);
         for (const fl of analysis.forLoops) {
           if (fl.hasTrackBy) continue;
+          if (!isAddedLine(ctx, tplRef.file, fl.line)) continue;
 
           const evidence: Evidence[] = [
             {
@@ -67,4 +68,8 @@ function buildTrackBySuggestion(iterableExpression: string): string {
 
 // in component:
 trackById = (_: number, ${itemName}: { id: string | number }) => ${itemName}.id;`;
+}
+
+function isAddedLine(ctx: RuleContext, file: string, line: number): boolean {
+  return ctx.diff.lineMap(file)?.addedNewLines.has(line) ?? false;
 }

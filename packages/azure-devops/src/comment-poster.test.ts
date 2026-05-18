@@ -78,6 +78,21 @@ describe('postFinding', () => {
 
     expect(result).toEqual({ posted: false, reason: 'change-tracking-id-missing' });
   });
+
+  it('skips unchanged context lines so comments stay on exact new code', async () => {
+    const ado = {
+      postThread: async () => {
+        throw new Error('should not post');
+      },
+    } as unknown as AdoClient;
+
+    const result = await postFinding(ado, PR, findingAt(10), diff(), {
+      iterationId: 4,
+      changeTrackingIds: new Map([['src/app/user.component.ts', 9]]),
+    });
+
+    expect(result).toEqual({ posted: false, reason: 'line-not-in-changed-hunk', fallbackLine: 11 });
+  });
 });
 
 function diff(): DiffIndex {

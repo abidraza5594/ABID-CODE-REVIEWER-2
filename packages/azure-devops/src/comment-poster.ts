@@ -36,13 +36,19 @@ export async function postFinding(
   finding: Finding,
   diff: DiffIndex,
   opts: PostOptions,
-): Promise<{ posted: boolean; reason?: string; threadId?: number }> {
+): Promise<{ posted: boolean; reason?: string; threadId?: number; fallbackLine?: number }> {
   if (opts.alreadyPosted && finding.fingerprint && opts.alreadyPosted.has(finding.fingerprint)) {
     return { posted: false, reason: 'already-posted-this-iteration' };
   }
 
-  const checks = isPostable(finding.location, diff, { requireAddedLine: false });
-  if (!checks.postable) return { posted: false, reason: checks.reason };
+  const checks = isPostable(finding.location, diff, { requireAddedLine: true });
+  if (!checks.postable) {
+    return {
+      posted: false,
+      reason: checks.reason,
+      ...(checks.fallbackLine !== undefined ? { fallbackLine: checks.fallbackLine } : {}),
+    };
+  }
 
   const changeTrackingId = opts.changeTrackingIds
     ? lookupChangeTrackingId(opts.changeTrackingIds, finding.location.file)
@@ -96,7 +102,7 @@ export function formatComment(finding: Finding, includeSuggestion: boolean): str
     lines.push('```');
   }
 
-  if (finding.siblings && finding.siblings.length > 0) {
+  if (finding.siblings && finding.siblings.length > 0 && !finding.message.body.includes('This same issue also exists here:')) {
     lines.push('');
     lines.push('This same issue also exists here:');
     for (const s of finding.siblings) {

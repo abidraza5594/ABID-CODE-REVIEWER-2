@@ -365,7 +365,7 @@ function locationOf(ctx: RuleContext, sourceFile: SourceFile, node: Node): Sourc
 function isChangedLine(ctx: RuleContext, file: string, line: number): boolean {
   const map = ctx.diff.lineMap(file);
   if (!map) return false;
-  return map.changedNewLines.has(line) || map.addedNewLines.has(line);
+  return map.addedNewLines.has(line);
 }
 
 function hasMatchingRemove(text: string, eventName: string): boolean {

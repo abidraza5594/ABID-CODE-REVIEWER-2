@@ -29,6 +29,7 @@ export const signalOverTriggerRule = {
       // Only fire on signals declared in changed files (avoids re-reporting old stuff).
       const file = node.file;
       if (!ctx.diff.fileByNewPath(file)) continue;
+      if (!isAddedLine(ctx, file, node.line)) continue;
 
       const consumers = ctx.repo.signals.consumersOf(node.id);
       if (consumers.length < FANOUT_THRESHOLD) continue;
@@ -91,3 +92,7 @@ export const signalOverTriggerRule = {
     return out;
   },
 } as const;
+
+function isAddedLine(ctx: RuleContext, file: string, line: number): boolean {
+  return ctx.diff.lineMap(file)?.addedNewLines.has(line) ?? false;
+}

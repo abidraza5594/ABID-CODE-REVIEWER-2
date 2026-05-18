@@ -461,7 +461,7 @@ export const largeComponentComplexityRule = {
   id: 'angular/large-component-complexity',
   category: 'architecture' as const,
   severity: 'info' as const,
-  basePrecision: 0.76,
+  basePrecision: 0.54,
   description: 'Very large Angular components are harder to test, reason about, and scale.',
 
   run(ctx: RuleContext): RawFinding[] {
@@ -472,23 +472,28 @@ export const largeComponentComplexityRule = {
       const sourceFile = ctx.project.getSourceFile(comp.tsFile);
       if (!sourceFile) continue;
       const cls = sourceFile.getClass(comp.className);
-      const lineCount = cls ? cls.getText().split('\n').length : 0;
+      if (!cls) continue;
+      const location = changedLineInsideNode(ctx, comp.tsFile, cls, sourceFile);
+      if (!location) continue;
+
+      const lineCount = cls.getText().split('\n').length;
       const methodCount = comp.methods.length;
       const fieldCount = comp.fields.length;
-      if (lineCount < 420 && methodCount < 18 && fieldCount < 24) continue;
-
-      const location = firstChangedLocation(ctx, comp.tsFile, sourceFile) ?? comp.location;
+      const branchPoints = cls.getMethods().reduce((sum, method) => sum + branchCount(method), 0);
       const centrality = ctx.repo.imports.centrality(comp.tsFile);
+      if (lineCount < 1000 && methodCount < 35 && fieldCount < 50) continue;
+      if (branchPoints < 70 && centrality < 8 && !ctx.runtime?.byComponent.get(comp.className)) continue;
+
       out.push({
         ruleId: 'angular/large-component-complexity',
         severity: 'info',
-        confidence: 0.76,
+        confidence: 0.54,
         location,
         evidence: [
           {
             kind: 'ast',
             nodeKind: 'ComponentClass',
-            description: `${comp.className} has ${lineCount} lines, ${methodCount} methods, and ${fieldCount} fields`,
+            description: `${comp.className} has ${lineCount} lines, ${methodCount} methods, ${fieldCount} fields, and ${branchPoints} branch points`,
           },
           {
             kind: 'cross-file',
@@ -512,7 +517,7 @@ export const largeMethodComplexityRule = {
   id: 'angular/large-method-complexity',
   category: 'maintainability' as const,
   severity: 'info' as const,
-  basePrecision: 0.82,
+  basePrecision: 0.58,
   description: 'Large or highly branched methods are difficult to verify safely.',
 
   run(ctx: RuleContext): RawFinding[] {
@@ -524,13 +529,13 @@ export const largeMethodComplexityRule = {
         const bodyText = method.getBodyText() ?? '';
         const lines = bodyText.split('\n').length;
         const branches = branchCount(method);
-        if (lines < 70 && branches < 14) continue;
+        if (lines < 120 && branches < 24) continue;
 
         const location = changedLineLocation(ctx, file, method, sourceFile) ?? locationOf(ctx, sourceFile, method);
         out.push({
           ruleId: 'angular/large-method-complexity',
           severity: 'info',
-          confidence: 0.82,
+          confidence: 0.58,
           location,
           evidence: [{
             kind: 'ast',
@@ -696,6 +701,7 @@ export const ssrBrowserGlobalRule = {
 
   run(ctx: RuleContext): RawFinding[] {
     const out: RawFinding[] = [];
+    if (!repoHasSsrEntrypoint(ctx)) return out;
 
     for (const { file, sourceFile } of changedTypeScriptFiles(ctx)) {
       sourceFile.forEachDescendant((node) => {
@@ -1138,7 +1144,7 @@ export const architectureServiceSeparationRule = {
   id: 'angular/service-responsibility-sprawl',
   category: 'architecture' as const,
   severity: 'info' as const,
-  basePrecision: 0.76,
+  basePrecision: 0.52,
   description: 'Large shared services with high import centrality are scalability risks.',
 
   run(ctx: RuleContext): RawFinding[] {
@@ -1150,12 +1156,15 @@ export const architectureServiceSeparationRule = {
       if (!cls) continue;
       const methods = cls.getMethods().length;
       const centrality = ctx.repo.imports.centrality(file);
-      if (methods < 18 && centrality < 10) continue;
-      const location = firstChangedLocation(ctx, file, sourceFile) ?? locationOf(ctx, sourceFile, cls);
+      const branchPoints = cls.getMethods().reduce((sum, method) => sum + branchCount(method), 0);
+      if (methods < 35 && centrality < 20) continue;
+      if (branchPoints < 70 && centrality < 20) continue;
+      const location = changedLineInsideNode(ctx, file, cls, sourceFile);
+      if (!location) continue;
       out.push({
         ruleId: 'angular/service-responsibility-sprawl',
         severity: 'info',
-        confidence: 0.76,
+        confidence: 0.52,
         location,
         evidence: [
           {
@@ -1214,12 +1223,12 @@ function locationOf(ctx: RuleContext, sourceFile: SourceFile, node: TsMorphNode)
 function isChangedLine(ctx: RuleContext, file: string, line: number): boolean {
   const map = ctx.diff.lineMap(file);
   if (!map) return false;
-  return map.changedNewLines.has(line) || map.addedNewLines.has(line);
+  return map.addedNewLines.has(line);
 }
 
 function firstChangedLocation(ctx: RuleContext, file: string, sourceFile: SourceFile): SourceLocation | undefined {
   const map = ctx.diff.lineMap(file);
-  const line = map ? [...map.changedNewLines].sort((a, b) => a - b)[0] : undefined;
+  const line = map ? [...map.addedNewLines].sort((a, b) => a - b)[0] : undefined;
   if (line === undefined) return undefined;
   return {
     file,
@@ -1237,7 +1246,7 @@ function changedLineLocation(
   sourceFile: SourceFile,
 ): SourceLocation | undefined {
   const methodLocation = locationOf(ctx, sourceFile, method);
-  const line = [...(ctx.diff.lineMap(file)?.changedNewLines ?? [])]
+  const line = [...(ctx.diff.lineMap(file)?.addedNewLines ?? [])]
     .sort((a, b) => a - b)
     .find((candidate) => methodLocation.startLine <= candidate && candidate <= (methodLocation.endLine ?? methodLocation.startLine));
   if (line === undefined) return undefined;
@@ -1247,11 +1256,25 @@ function changedLineLocation(
 function methodContainsChangedLine(ctx: RuleContext, file: string, method: MethodDeclaration): boolean {
   const sourceFile = method.getSourceFile();
   const location = locationOf(ctx, sourceFile, method);
-  const changed = ctx.diff.lineMap(file)?.changedNewLines ?? new Set<number>();
+  const changed = ctx.diff.lineMap(file)?.addedNewLines ?? new Set<number>();
   for (const line of changed) {
     if (location.startLine <= line && line <= (location.endLine ?? location.startLine)) return true;
   }
   return false;
+}
+
+function changedLineInsideNode(
+  ctx: RuleContext,
+  file: string,
+  node: TsMorphNode,
+  sourceFile: SourceFile,
+): SourceLocation | undefined {
+  const location = locationOf(ctx, sourceFile, node);
+  const line = [...(ctx.diff.lineMap(file)?.addedNewLines ?? [])]
+    .sort((a, b) => a - b)
+    .find((candidate) => location.startLine <= candidate && candidate <= (location.endLine ?? location.startLine));
+  if (line === undefined) return undefined;
+  return { file, startLine: line, endLine: line, startColumn: 0, endColumn: 0 };
 }
 
 function allowsNullish(type: import('ts-morph').Type, typeText: string): boolean {
@@ -1428,6 +1451,15 @@ function hasPlatformGuard(node: TsMorphNode): boolean {
 function fileHasPlatformGuard(sourceFile: SourceFile): boolean {
   const text = sourceFile.getFullText();
   return /\bisPlatformBrowser\s*\(/.test(text) || /\bDOCUMENT\b/.test(text);
+}
+
+function repoHasSsrEntrypoint(ctx: RuleContext): boolean {
+  return ctx.project.sourceFiles().some((sourceFile) => {
+    const file = ctx.project.relativePath(sourceFile);
+    if (/(^|\/)(main\.server|server|app\.config\.server|app\.routes\.server)\.ts$/i.test(file)) return true;
+    const text = sourceFile.getFullText();
+    return /@angular\/platform-server|provideServerRendering|renderApplication|ngExpressEngine|CommonEngine/.test(text);
+  });
 }
 
 function importLocationFor(

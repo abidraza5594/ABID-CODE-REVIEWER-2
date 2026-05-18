@@ -5,7 +5,7 @@ import { Redis } from 'ioredis';
 import { simpleGit } from 'simple-git';
 import type { Logger } from 'pino';
 import type { Finding, ReviewJob, RuntimeScenario, RuntimeTrace } from '@abid/core';
-import { DiffIndex, parseUnifiedDiff } from '@abid/git-diff-engine';
+import { DiffIndex, isPostable, parseUnifiedDiff } from '@abid/git-diff-engine';
 import { AstProject, type ComponentDescriptor } from '@abid/ast-engine';
 import { buildContext } from '@abid/repo-context-engine';
 import { ALL_RULES, runAnalyzer, type RuntimeBundle } from '@abid/angular-analyzer';
@@ -126,6 +126,10 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
       } else if (disposition === 'summarize') {
         f.stage = 'summarized';
         f.dispositionReason = 'below-confidence-floor';
+      } else if (!isExactAddedLine(f, diff)) {
+        f.stage = 'summarized';
+        f.dispositionReason = 'not-on-added-line';
+        f.notes = 'Summary only: finding is not anchored to the exact added statement in this PR.';
       }
     }
 
@@ -149,7 +153,7 @@ export async function runReview(job: ReviewJob, log: Logger): Promise<void> {
     let posted = 0;
     for (const f of toPost) {
       if (f.stage !== 'rewritten') continue;
-      const result = await postFinding(ado, job.pr, f, diff, { iterationId, changeTrackingIds, includeSuggestionBlock: true });
+      const result = await postFinding(ado, job.pr, f, diff, { iterationId, changeTrackingIds, includeSuggestionBlock: true, closeThreadOnLowSeverity: true });
       if (result.posted) {
         posted++;
         f.stage = 'posted';
@@ -429,4 +433,8 @@ const RULE_PRECISION_BY_ID: Map<string, number> = new Map(ALL_RULES.map((rule) =
 
 function rulePrecisionOf(ruleId: string): number {
   return RULE_PRECISION_BY_ID.get(ruleId) ?? 0.65;
+}
+
+function isExactAddedLine(finding: Finding, diff: DiffIndex): boolean {
+  return isPostable(finding.location, diff, { requireAddedLine: true }).postable;
 }

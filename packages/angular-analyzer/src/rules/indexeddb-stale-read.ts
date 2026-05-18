@@ -61,6 +61,7 @@ export const indexedDbStaleReadRule = {
           if (pendingTargetText) {
             const readMatch = new RegExp(`\\b${escapeRegex(pendingTargetText)}\\.(get|where|toArray)\\s*\\(`).exec(text);
             if (readMatch) {
+              if (!isAddedLine(ctx, comp.tsFile, lineInfo.line)) continue;
               out.push({
                 ruleId: 'angular/indexeddb-stale-read',
                 severity: 'warn',
@@ -102,4 +103,8 @@ const value = await ${pendingTargetText}.get(...);`,
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isAddedLine(ctx: RuleContext, file: string, line: number): boolean {
+  return ctx.diff.lineMap(file)?.addedNewLines.has(line) ?? false;
 }

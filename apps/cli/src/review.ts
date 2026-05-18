@@ -5,7 +5,7 @@ import { simpleGit } from 'simple-git';
 import kleur from 'kleur';
 import type { Finding } from '@abid/core';
 import { ulid } from '@abid/core';
-import { DiffIndex, parseUnifiedDiff, type FileDiff } from '@abid/git-diff-engine';
+import { DiffIndex, isPostable, parseUnifiedDiff, type FileDiff } from '@abid/git-diff-engine';
 import { AstProject, type ComponentDescriptor } from '@abid/ast-engine';
 import { buildContext, type RepoContext } from '@abid/repo-context-engine';
 import {
@@ -282,6 +282,10 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
       } else if (d === 'summarize') {
         f.stage = 'summarized';
         f.dispositionReason = 'below-confidence-floor';
+      } else if (!isExactAddedLine(f, diff)) {
+        f.stage = 'summarized';
+        f.dispositionReason = 'not-on-added-line';
+        f.notes = 'Summary only: finding is not anchored to the exact added statement in this PR.';
       }
       // 'post' stays as 'clustered' until voice-rewrite promotes it to 'rewritten'.
     }
@@ -345,7 +349,7 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
               prRef,
               f,
               diff,
-              { iterationId, changeTrackingIds, includeSuggestionBlock: true },
+              { iterationId, changeTrackingIds, includeSuggestionBlock: true, closeThreadOnLowSeverity: true },
             );
             if (result.posted) {
               summary.posted++;
@@ -799,4 +803,8 @@ const RULE_PRECISION_BY_ID: Map<string, number> = new Map(ALL_RULES.map((rule) =
 
 function rulePrecisionOf(ruleId: string): number {
   return RULE_PRECISION_BY_ID.get(ruleId) ?? 0.65;
+}
+
+function isExactAddedLine(finding: Finding, diff: DiffIndex): boolean {
+  return isPostable(finding.location, diff, { requireAddedLine: true }).postable;
 }

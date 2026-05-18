@@ -40,6 +40,7 @@ export const templateMethodCallRule = {
         const analysis = parseTemplateRef(tplRef);
         for (const call of analysis.methodCalls) {
           if (!call.inHotPath) continue;
+          if (!isAddedLine(ctx, tplRef.file, call.line)) continue;
           // Filter known-cheap calls.
           if (isPureLookup(call.name)) continue;
 
@@ -94,4 +95,8 @@ function isPureLookup(name: string): boolean {
 
 function toCachedName(methodName: string): string {
   return `${methodName.replace(/^[A-Z]/, (c) => c.toLowerCase())}Value`;
+}
+
+function isAddedLine(ctx: RuleContext, file: string, line: number): boolean {
+  return ctx.diff.lineMap(file)?.addedNewLines.has(line) ?? false;
 }

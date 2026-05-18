@@ -18,6 +18,8 @@ const BANNED_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bstate inconsistency\b/i, reason: 'banned: hard phrase "state inconsistency"' },
   { pattern: /\blifecycle retention\b/i, reason: 'banned: hard phrase "lifecycle retention"' },
   { pattern: /\bruntime invariant\b/i, reason: 'banned: hard phrase "runtime invariant"' },
+  { pattern: /\bsplit (this|the) component\b/i, reason: 'banned: generic component split comment' },
+  { pattern: /\bmove related methods\b/i, reason: 'banned: generic move-related-methods comment' },
   // URLs except markdown-fenced code blocks indicate possible prompt-injection escapes.
   { pattern: /https?:\/\//, reason: 'banned: URL in output' },
 ];

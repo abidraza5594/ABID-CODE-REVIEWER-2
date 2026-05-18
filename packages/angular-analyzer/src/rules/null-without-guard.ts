@@ -47,6 +47,7 @@ export const nullWithoutGuardRule = {
 
           // Upstream *ngIf / @if guards covering this binding's line?
           const bindingLine = locateBindingLineInTemplate(analysis, b.expression);
+          if (bindingLine === null || !isAddedLine(ctx, tplRef.file, bindingLine)) continue;
           const guarded = bindingLine !== null && analysis.guards.some(
             (g) => coversLine(g.range, bindingLine) && namesRoot(g.expression, b.rootSymbol),
           );
@@ -99,7 +100,7 @@ export const nullWithoutGuardRule = {
             confidence: 0.70,
             location: {
               file: tplRef.file,
-              startLine: locateBindingLineInTemplate(analysis, b.expression) ?? comp.location.startLine,
+              startLine: bindingLine,
             },
             evidence,
             guarantees,
@@ -152,4 +153,8 @@ function buildSuggestion(expression: string, rootSymbol?: string): string {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isAddedLine(ctx: RuleContext, file: string, line: number): boolean {
+  return ctx.diff.lineMap(file)?.addedNewLines.has(line) ?? false;
 }
