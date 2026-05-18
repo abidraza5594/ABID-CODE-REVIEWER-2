@@ -908,11 +908,17 @@
 
     const ruleChecks = [
       { id: 'diff', name: 'Diff map', state: 'clean', text: 'Changed-line anchors ready.' },
-      { id: 'subscription', name: 'RxJS cleanup', state: 'active', text: 'Checking subscribe lifetimes.' },
+      { id: 'runtime', name: 'Runtime validation', state: 'pending', text: 'Checking crash, render, and call evidence.' },
+      { id: 'subscription', name: 'RxJS cleanup', state: 'pending', text: 'Checking subscribe lifetimes.' },
+      { id: 'rxjs', name: 'RxJS flow', state: 'pending', text: 'Checking nested streams and repeated work.' },
       { id: 'null', name: 'Null guards', state: 'pending', text: 'Waiting for template proof.' },
       { id: 'trackby', name: 'trackBy', state: 'pending', text: 'Checking repeated DOM lists.' },
       { id: 'template', name: 'Template calls', state: 'pending', text: 'Checking hot-path methods.' },
-      { id: 'indexeddb', name: 'IndexedDB cache', state: 'pending', text: 'Checking stale read races.' }
+      { id: 'indexeddb', name: 'IndexedDB cache', state: 'pending', text: 'Checking stale read races.' },
+      { id: 'network', name: 'API calls', state: 'pending', text: 'Checking duplicate calls and errors.' },
+      { id: 'state', name: 'State sync', state: 'pending', text: 'Checking signals, stores, and cache state.' },
+      { id: 'forms', name: 'Forms', state: 'pending', text: 'Checking control access and validation.' },
+      { id: 'security', name: 'Security', state: 'pending', text: 'Checking unsafe values and API misuse.' }
     ];
 
     const liveFrames = [
@@ -1116,6 +1122,9 @@
       if (frame.timeline) {
         liveState.currentPhaseTitle = frame.timeline[1];
         liveState.currentPhaseDetail = frame.timeline[2];
+        if (frame.timeline[0] === 'done' && frame.timeline[1] === 'Mark file completed' && liveState.activeFile) {
+          liveState.completedFiles.add(liveState.activeFile);
+        }
         if (frame.timeline[1] === 'PR selected') {
           updateReviewSubtitle(`${frame.timeline[2]} · Angular runtime-aware review · live explainability stream`);
         }
@@ -1131,6 +1140,7 @@
       if (frame.skip) addSkip(frame.skip);
       if (frame.comment) addComment(frame.comment);
       if (frame.markComplete) liveState.completedFiles.add(frame.file);
+      if (frame.finished && liveState.activeFile) liveState.completedFiles.add(liveState.activeFile);
       renderRuleBoard();
       renderScope();
       renderLiveMetrics();
@@ -1155,6 +1165,9 @@
       liveState.fileIndex = 0;
       liveState.phaseIndex = 0;
       liveState.displayPhaseIndex = 0;
+      liveState.checkedFiles.clear();
+      liveState.completedFiles.clear();
+      liveState.completedRules.clear();
       liveState.activeFile = analysisScope[0]?.[0] || '';
       liveState.currentPhaseTitle = 'Changed file queue ready';
       liveState.currentPhaseDetail = `${analysisScope.length} changed file(s) are ready for sequential analysis.`;
@@ -1432,12 +1445,16 @@
     function categoryMatchesRule(name, rule) {
       const text = name.toLowerCase();
       return (rule === 'subscription' && (text.includes('subscription') || text.includes('rxjs') || text.includes('lifecycle') || text.includes('event')))
+        || (rule === 'rxjs' && (text.includes('rxjs') || text.includes('async') || text.includes('race') || text.includes('repeated')))
+        || (rule === 'runtime' && (text.includes('runtime') || text.includes('crash') || text.includes('bottleneck') || text.includes('render')))
         || (rule === 'null' && (text.includes('null') || text.includes('typing') || text.includes('runtime crash')))
         || (rule === 'trackby' && (text.includes('trackby') || text.includes('dom') || text.includes('rerender')))
         || (rule === 'template' && (text.includes('template') || text.includes('change detection') || text.includes('onpush') || text.includes('performance')))
         || (rule === 'indexeddb' && (text.includes('indexeddb') || text.includes('cache') || text.includes('race')))
         || (rule === 'network' && (text.includes('api') || text.includes('n+1') || text.includes('loading')))
-        || (rule === 'state' && (text.includes('state') || text.includes('store') || text.includes('signal')));
+        || (rule === 'state' && (text.includes('state') || text.includes('store') || text.includes('signal')))
+        || (rule === 'forms' && text.includes('form'))
+        || (rule === 'security' && text.includes('security'));
     }
 
     function renderScope() {
@@ -1696,6 +1713,11 @@
           upsertTimeline(['done', data.title || 'Review complete', 'Backend stream completed.']);
           addThought(['Review stream completed.', 'done']);
           liveState.streamStatus = 'complete';
+          if (liveState.activeFile) liveState.completedFiles.add(liveState.activeFile);
+          if (analysisScope.length) {
+            analysisScope.forEach(([file]) => liveState.completedFiles.add(file));
+          }
+          renderScope();
           updateHeader();
         });
         stream.addEventListener('timeline', (e) => {
@@ -1739,7 +1761,7 @@
           received = true;
           const data = JSON.parse(e.data);
           renderLiveFrame({
-            rule: data.rule || 'subscription',
+            rule: data.rule || liveState.activeRule || 'diff',
             comment: {
               type: data.severity || 'warn',
               file: data.file,

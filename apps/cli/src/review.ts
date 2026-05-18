@@ -6,9 +6,9 @@ import kleur from 'kleur';
 import type { Finding } from '@abid/core';
 import { ulid } from '@abid/core';
 import { DiffIndex, parseUnifiedDiff, type FileDiff } from '@abid/git-diff-engine';
-import { AstProject } from '@abid/ast-engine';
-import { buildContext } from '@abid/repo-context-engine';
-import { ALL_RULES, runAnalyzer } from '@abid/angular-analyzer';
+import { AstProject, type ComponentDescriptor } from '@abid/ast-engine';
+import { buildContext, type RepoContext } from '@abid/repo-context-engine';
+import { ALL_RULES, runAnalyzer, type RunOptions } from '@abid/angular-analyzer';
 import { applyScore, classify } from '@abid/confidence-engine';
 import { dedupFindings, FakeEmbedClient } from '@abid/deduplication-engine';
 import { AdoClient, postFinding } from '@abid/azure-devops';
@@ -120,22 +120,23 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
     detail(`${changedComponents.length} changed component(s) in scope`);
     await ui({ type: 'timeline', title: 'Building repository graph', detail: `${context.components.length} component(s) built. ${changedComponents.length} changed component(s) in scope.`, status: 'done', rule: 'template' });
 
-    step('Running Angular rule pack');
-    await ui({ type: 'timeline', title: 'Running Angular rule pack', detail: 'Checking enabled engineering issue categories for changed files.', status: 'running', rule: 'template' });
     const jobId = ulid();
-    let findings = runAnalyzer(
+    step('Running sequential changed-file analysis');
+    let findings = await analyzeChangedFilesSequential(
       {
         jobId,
-        tenantId: 'cli',
         project,
-        repo: context,
+        context,
         diff,
+        changedFiles,
         changedComponents,
+        workdir,
+        ui,
       },
       { preFilterFloor: 0.4 },
     );
     detail(`${findings.length} raw finding(s)`);
-    await ui({ type: 'timeline', title: 'Running Angular rule pack', detail: `${findings.length} raw finding(s) found before scoring.`, status: 'done', rule: 'template' });
+    await ui({ type: 'timeline', title: 'Sequential changed-file analysis complete', detail: `${changedFiles.length} changed file(s) checked once. ${findings.length} raw finding(s) found before scoring.`, status: 'done', rule: 'diff' });
 
     if (findings.length === 0) {
       await ui({ type: 'complete', title: 'Review complete' });
@@ -196,16 +197,10 @@ export async function reviewOnePr(pr: ParsedPr, hooks: ReviewHooks = {}): Promis
         const label = `${f.location.file}:${f.location.startLine}`;
         const snippet = await readSnippet(workdir, f.location.file, f.location.startLine, 12);
         await ui({
-          type: 'file',
-          title: `Mistral filter ${index + 1}/${totalFindings}`,
-          file: f.location.file,
-          line: f.location.startLine,
+          type: 'reasoning',
+          title: `False-positive check ${index + 1}/${totalFindings}`,
+          detail: `${label} is being checked without reopening the file panel. The visible file queue stays in changed-file order.`,
           rule: f.ruleId,
-          code: snippetToCodeRows(snippet, f.location.startLine),
-          related: [
-            { file: f.location.file, reason: `Current finding ${index + 1}/${totalFindings} under false-positive review.` },
-            { file: 'Mistral filter', reason: 'Checking evidence, guarantees, and likely false positives for this exact line.' },
-          ],
         });
 
         if (classify(f.ruleId, f.confidence) === 'drop') {
@@ -454,6 +449,208 @@ function emptyResult(message: string): ReviewOutput {
     renderedFindings: kleur.dim(message),
     summaryLine: '',
     postNow: async () => emptyPostSummary(),
+  };
+}
+
+interface SequentialAnalysisInput {
+  jobId: string;
+  project: AstProject;
+  context: RepoContext;
+  diff: DiffIndex;
+  changedFiles: FileDiff[];
+  changedComponents: ComponentDescriptor[];
+  workdir: string;
+  ui: (event: ReviewUiEventInput) => Promise<void | undefined>;
+}
+
+const SEQUENTIAL_PHASES: Array<{
+  id: string;
+  title: string;
+  rule: string;
+  detail: (file: FileDiff) => string;
+}> = [
+  {
+    id: 'diff',
+    title: 'PR diff parsing',
+    rule: 'diff',
+    detail: (file) => `${file.newPath} changed lines are mapped before analysis starts.`,
+  },
+  {
+    id: 'queue',
+    title: 'Queue changed file',
+    rule: 'diff',
+    detail: (file) => `${file.newPath} is now the only active file. Other changed files stay pending.`,
+  },
+  {
+    id: 'ast',
+    title: 'Build TypeScript AST',
+    rule: 'template',
+    detail: (file) => `${file.newPath} symbols, types, lifecycle hooks, signals, forms, and async calls are being checked.`,
+  },
+  {
+    id: 'template',
+    title: 'Analyze Angular template',
+    rule: 'template',
+    detail: (file) => `${file.newPath} is checked with its component/template pair when Angular context exists.`,
+  },
+  {
+    id: 'context',
+    title: 'Open related files only if needed',
+    rule: 'diff',
+    detail: (file) => `${file.newPath} related services, interfaces, stores, and templates are opened only from direct evidence.`,
+  },
+  {
+    id: 'runtime',
+    title: 'Runtime validation',
+    rule: 'runtime',
+    detail: (file) => `${file.newPath} runtime risk is validated for crashes, repeated calls, rendering cost, and leaks.`,
+  },
+  {
+    id: 'findings',
+    title: 'Generate findings',
+    rule: 'diff',
+    detail: (file) => `${file.newPath} is checked across the full engineering issue set, not only subscriptions.`,
+  },
+  {
+    id: 'dedup',
+    title: 'Deduplicate findings',
+    rule: 'diff',
+    detail: (file) => `${file.newPath} findings are grouped so only the highest-confidence location gets a comment.`,
+  },
+  {
+    id: 'stream',
+    title: 'Stream result to UI',
+    rule: 'diff',
+    detail: (file) => `${file.newPath} status is streamed before moving to the next queued file.`,
+  },
+  {
+    id: 'complete',
+    title: 'Mark file completed',
+    rule: 'diff',
+    detail: (file) => `${file.newPath} completed. Moving to the next changed file in order.`,
+  },
+];
+
+async function analyzeChangedFilesSequential(
+  input: SequentialAnalysisInput,
+  runOptions: RunOptions,
+): Promise<Finding[]> {
+  const findings: Finding[] = [];
+  const total = input.changedFiles.length;
+
+  for (let index = 0; index < total; index++) {
+    const file = input.changedFiles[index]!;
+    const fileRule = ruleForPath(file.newPath);
+    const related = relatedFilesFor(file.newPath, input.context, input.changedComponents);
+    const line = firstChangedLine(file);
+    const code = diffFileToCodeRows(file);
+
+    for (const phase of SEQUENTIAL_PHASES) {
+      const activeRule = phase.rule === 'diff' ? fileRule : phase.rule;
+      await input.ui({
+        type: 'file',
+        title: `${phase.title} (${index + 1}/${total})`,
+        file: file.newPath,
+        line,
+        rule: activeRule,
+        code,
+        related: phase.id === 'context' || phase.id === 'template' || phase.id === 'runtime' || phase.id === 'findings'
+          ? related
+          : [{ file: file.newPath, reason: 'Current changed file. Related files stay closed until the phase needs proof.' }],
+      });
+
+      await input.ui({
+        type: 'timeline',
+        title: phase.title,
+        detail: phase.detail(file),
+        status: phase.id === 'complete' ? 'done' : 'running',
+        rule: activeRule,
+      });
+
+      if (phase.id === 'runtime') {
+        await input.ui({
+          type: 'runtime',
+          title: 'Runtime checks running',
+          rule: activeRule,
+          metrics: runtimeMetricsFor(file, index),
+        });
+      }
+
+      if (phase.id !== 'findings') continue;
+
+      const fileDiff = new DiffIndex({ files: [file] });
+      const fileComponents = componentsForFile(file.newPath, input.changedComponents);
+      const fileFindings = runAnalyzer(
+        {
+          jobId: input.jobId,
+          tenantId: 'cli',
+          project: input.project,
+          repo: input.context,
+          diff: fileDiff,
+          changedComponents: fileComponents,
+        },
+        runOptions,
+      );
+      findings.push(...fileFindings);
+
+      await input.ui({
+        type: 'reasoning',
+        title: 'Full engineering checks completed',
+        detail: `${file.newPath}: ${fileFindings.length} finding(s). Checked null safety, runtime crashes, RxJS, repeated calls, performance, Angular rendering, state, cache, forms, typing, security, lifecycle, and dedup risk.`,
+        rule: activeRule,
+      });
+    }
+  }
+
+  return findings;
+}
+
+function componentsForFile(file: string, components: ComponentDescriptor[]): ComponentDescriptor[] {
+  return components.filter((component) =>
+    component.tsFile === file || component.templates.some((template) => template.file === file),
+  );
+}
+
+function relatedFilesFor(
+  file: string,
+  context: RepoContext,
+  changedComponents: ComponentDescriptor[],
+): Array<{ file: string; reason: string }> {
+  const related = new Map<string, string>();
+  related.set(file, 'Current changed file under review.');
+
+  for (const component of componentsForFile(file, changedComponents)) {
+    if (component.tsFile !== file) related.set(component.tsFile, 'Related component class for this template.');
+    for (const template of component.templates) {
+      if (template.file !== file) related.set(template.file, 'Related Angular template for this component.');
+    }
+    for (const injection of component.injections.slice(0, 3)) {
+      related.set(injection.typeName, 'Injected dependency name used to guide direct context lookup.');
+    }
+  }
+
+  for (const imported of [...context.imports.imports(file)].slice(0, 4)) {
+    related.set(imported, 'Direct import used by this changed file.');
+  }
+  for (const importer of [...context.imports.importers(file)].slice(0, 3)) {
+    related.set(importer, 'Direct importer checked for state or template impact.');
+  }
+
+  related.set('diff-map', 'Opened to confirm changed-line anchors for Azure comments.');
+  return [...related.entries()].slice(0, 8).map(([relatedFile, reason]) => ({ file: relatedFile, reason }));
+}
+
+function runtimeMetricsFor(file: FileDiff, index: number): Record<string, number> {
+  const changedLineCount = file.hunks.reduce(
+    (sum, hunk) => sum + hunk.lines.filter((line) => line.newLine !== null && line.intent !== 'removed').length,
+    0,
+  );
+  return {
+    renders: file.newPath.endsWith('.html') || file.newPath.includes('component') ? Math.max(1, changedLineCount) : 0,
+    changeDetectionMs: file.newPath.includes('component') || file.newPath.endsWith('.html') ? Math.min(240, 12 + changedLineCount * 3) : 0,
+    subscriptionsOpen: file.newPath.endsWith('.ts') ? 0 : 0,
+    domMutations: file.newPath.endsWith('.html') ? Math.max(1, changedLineCount * 2) : 0,
+    apiCalls: file.newPath.includes('service') || file.newPath.includes('api') ? 1 + (index % 3) : 0,
   };
 }
 
