@@ -38,6 +38,7 @@ export interface ScoreWeights {
   llmDefault: number;
   /** Additive boosts. */
   typeCorroboration: number;
+  templateCorroboration: number;
   runtimeCorroboration: number;
   crossFile: number;
   /** Multiplicative guarantee penalty (1 - strength). */
@@ -61,6 +62,7 @@ export const DEFAULT_WEIGHTS: ScoreWeights = {
   rulePrecisionCeiling: 0.90,
   llmDefault: 0.5,
   typeCorroboration: 0.05,
+  templateCorroboration: 0.05,
   runtimeCorroboration: 0.15,
   crossFile: 0.10,
   guaranteePenalty: 1.0,
@@ -92,6 +94,11 @@ export function scoreFinding(inputs: ScoreInputs, weights: ScoreWeights = DEFAUL
   const runtimeC = (hasRuntime ? 1 : 0) * weights.runtimeCorroboration;
   breakdown['runtime'] = runtimeC;
 
+  const hasTemplate = inputs.evidence.some((e) => e.kind === 'template-binding');
+  const hasTemplateContext = hasTemplate && inputs.evidence.some((e) => e.kind === 'callgraph' || e.kind === 'runtime' || e.kind === 'type');
+  const templateC = (hasTemplateContext ? 1 : 0) * weights.templateCorroboration;
+  breakdown['template'] = templateC;
+
   const cross = inputs.evidence.find((e) => e.kind === 'cross-file');
   const crossMatches = cross && cross.kind === 'cross-file' ? cross.matches.length : 0;
   const crossC = crossMatches >= 2 ? Math.min(1, crossMatches / 5) * weights.crossFile : 0;
@@ -101,7 +108,7 @@ export function scoreFinding(inputs: ScoreInputs, weights: ScoreWeights = DEFAUL
   // proportional to its strength. A 0.85 resolver guarantee with weight 1.0 cuts
   // the score to ~15% of its raw value.
   const guarPenalty = guaranteeStrength(inputs.guarantees) * weights.guaranteePenalty;
-  const beforeGuar = ruleContribution + typeC + runtimeC + crossC;
+  const beforeGuar = ruleContribution + typeC + templateC + runtimeC + crossC;
   const afterGuar = beforeGuar * (1 - guarPenalty);
   breakdown['guarantee-penalty'] = -(beforeGuar - afterGuar);
 

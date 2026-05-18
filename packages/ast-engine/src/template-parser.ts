@@ -5,8 +5,8 @@ import {
   type TmplAstBoundEvent,
   type TmplAstBoundText,
   type TmplAstElement,
-  type TmplAstIfBlock,
   type TmplAstForLoopBlock,
+  type TmplAstIfBlock,
   type TmplAstNode,
   type TmplAstTemplate,
   TmplAstRecursiveVisitor,
@@ -14,12 +14,9 @@ import {
 import type { TemplateRef } from './types.js';
 
 /**
- * Wrap Angular's template parser and expose a flat list of *interesting* nodes
- * with their head-revision line numbers.
- *
- * We deliberately do not surface every AST node — rules want a denormalized
- * view: interpolations, bindings, structural blocks, *ngIf/@if guards,
- * *ngFor expressions, and method-call expressions inside template scope.
+ * Wrap Angular's template parser and expose a denormalized rendering view.
+ * Rules consume this together with the component descriptor so findings are
+ * about Angular behavior, not isolated HTML or TypeScript snippets.
  */
 export interface TemplateAnalysis {
   /** Original ref. */
@@ -33,6 +30,16 @@ export interface TemplateAnalysis {
   methodCalls: TemplateMethodCall[];
   /** Discovered `trackBy` declarations per *ngFor / @for block. */
   forLoops: TemplateForLoop[];
+  /** Async pipe usages, grouped later to catch repeated template subscriptions. */
+  asyncPipes: TemplateAsyncPipe[];
+  /** Non-async pipe usages that run during rendering. */
+  pipes: TemplatePipeBinding[];
+  /** Dynamic class/style bindings that can trigger DOM updates. */
+  dynamicBindings: TemplateDynamicBinding[];
+  /** Template form bindings and submit handlers. */
+  formBindings: TemplateFormBinding[];
+  /** Coarse rendering shape used by Angular-aware performance rules. */
+  rendering: TemplateRenderingSummary;
   /** Diagnostics from the Angular template parser. */
   diagnostics: Array<{ message: string; line: number }>;
 }
@@ -44,7 +51,7 @@ export interface TemplateBinding {
   line: number;
   /** 'attribute' | 'interpolation' | 'event'. */
   kind: 'attribute' | 'interpolation' | 'event' | 'two-way';
-  /** Owner element tag, if applicable. */
+  /** Owner element tag or binding name, if applicable. */
   ownerTag?: string;
 }
 
@@ -60,7 +67,7 @@ export interface TemplateGuard {
 export interface TemplateMethodCall {
   /** Method name (e.g. `getTotal`). */
   name: string;
-  /** Receiver if accessible, e.g. `this.cart` → 'cart'. Empty for bare calls. */
+  /** Receiver if accessible, e.g. `cart.total()` -> 'cart'. Empty for bare calls. */
   receiver: string;
   line: number;
   /** Context: was the call inside an interpolation that runs every change-detection cycle? */
@@ -72,7 +79,49 @@ export interface TemplateForLoop {
   iterableExpression: string;
   /** True if a `trackBy` (template form) or `track` (control-flow form) is declared. */
   hasTrackBy: boolean;
+  /** Nesting depth. 1 = top-level loop, 2+ = nested render fan-out. */
+  depth: number;
+  /** Loop item variable when statically visible. */
+  itemName?: string;
   line: number;
+}
+
+export interface TemplateAsyncPipe {
+  expression: string;
+  line: number;
+  kind: TemplateBinding['kind'];
+}
+
+export interface TemplatePipeBinding {
+  name: string;
+  expression: string;
+  line: number;
+  inHotPath: boolean;
+}
+
+export interface TemplateDynamicBinding {
+  kind: 'class' | 'style';
+  name: string;
+  expression: string;
+  line: number;
+}
+
+export interface TemplateFormBinding {
+  kind: 'ngModel' | 'formControlName' | 'formGroup' | 'ngSubmit';
+  expression: string;
+  line: number;
+}
+
+export interface TemplateRenderingSummary {
+  elementCount: number;
+  maxElementDepth: number;
+  loopCount: number;
+  maxLoopDepth: number;
+  hotBindingCount: number;
+  asyncPipeCount: number;
+  pipeCount: number;
+  dynamicClassStyleCount: number;
+  formBindingCount: number;
 }
 
 /**
@@ -97,41 +146,66 @@ export function parseTemplateRef(ref: TemplateRef): TemplateAnalysis {
   const guards: TemplateGuard[] = [];
   const methodCalls: TemplateMethodCall[] = [];
   const forLoops: TemplateForLoop[] = [];
+  const asyncPipes: TemplateAsyncPipe[] = [];
+  const pipes: TemplatePipeBinding[] = [];
+  const dynamicBindings: TemplateDynamicBinding[] = [];
+  const formBindings: TemplateFormBinding[] = [];
+
+  let elementDepth = 0;
+  let loopDepth = 0;
+  let elementCount = 0;
+  let maxElementDepth = 0;
+  let hotBindingCount = 0;
 
   const lineOf = (offset: number) => baseLine + offsetToLine(ref.source, offset);
 
   class Visitor extends TmplAstRecursiveVisitor {
     override visitBoundAttribute(b: TmplAstBoundAttribute): void {
       const expression = expressionText(b.value);
+      const line = lineOf(b.sourceSpan.start.offset);
       bindings.push({
         expression,
-        line: lineOf(b.sourceSpan.start.offset),
+        line,
         kind: 'attribute',
+        ownerTag: b.name,
       });
-      collectMethodCalls(expression, lineOf(b.sourceSpan.start.offset), true, methodCalls);
+      hotBindingCount++;
+      collectMethodCalls(expression, line, true, methodCalls);
+      collectPipes(expression, line, true, pipes, asyncPipes, 'attribute');
+      collectDynamicBinding(b.name, expression, line, dynamicBindings);
+      collectFormBinding(b.name, expression, line, formBindings);
       super.visitBoundAttribute(b);
     }
+
     override visitBoundEvent(b: TmplAstBoundEvent): void {
       const expression = expressionText(b.handler);
+      const line = lineOf(b.sourceSpan.start.offset);
       bindings.push({
         expression,
-        line: lineOf(b.sourceSpan.start.offset),
+        line,
         kind: 'event',
+        ownerTag: b.name,
       });
-      // Event handlers run on user input, not every CD cycle — not hot path.
-      collectMethodCalls(expression, lineOf(b.sourceSpan.start.offset), false, methodCalls);
+      // Event handlers run on user input, not every change-detection cycle.
+      collectMethodCalls(expression, line, false, methodCalls);
+      collectFormBinding(b.name, expression, line, formBindings);
       super.visitBoundEvent(b);
     }
+
     override visitBoundText(b: TmplAstBoundText): void {
       const expression = expressionText(b.value);
+      const line = lineOf(b.sourceSpan.start.offset);
       bindings.push({
         expression,
-        line: lineOf(b.sourceSpan.start.offset),
+        line,
         kind: 'interpolation',
       });
-      collectMethodCalls(expression, lineOf(b.sourceSpan.start.offset), true, methodCalls);
+      hotBindingCount++;
+      collectMethodCalls(expression, line, true, methodCalls);
+      collectPipes(expression, line, true, pipes, asyncPipes, 'interpolation');
       super.visitBoundText(b);
     }
+
     override visitIfBlock(blk: TmplAstIfBlock): void {
       for (const branch of blk.branches) {
         if (branch.expression) {
@@ -147,43 +221,63 @@ export function parseTemplateRef(ref: TemplateRef): TemplateAnalysis {
       }
       super.visitIfBlock(blk);
     }
+
     override visitForLoopBlock(blk: TmplAstForLoopBlock): void {
       const line = lineOf(blk.sourceSpan.start.offset);
+      const itemName = readForBlockItem(blk);
+      loopDepth++;
       forLoops.push({
         iterableExpression: blk.expression.toString(),
-        // Control-flow @for *requires* a track expression, so it's always tracked.
+        // Control-flow @for requires a track expression.
         hasTrackBy: true,
+        depth: loopDepth,
+        ...(itemName ? { itemName } : {}),
         line,
       });
       super.visitForLoopBlock(blk);
+      loopDepth--;
     }
+
     override visitTemplate(tpl: TmplAstTemplate): void {
-      // *ngIf / *ngFor are surfaced here.
+      const ngFor = readNgFor(tpl);
+      if (ngFor) loopDepth++;
+
       for (const inp of tpl.templateAttrs) {
         const name = inp.name;
+        const line = lineOf(inp.sourceSpan.start.offset);
+        const expression = expressionText((inp as { value?: unknown }).value);
         if (name === 'ngIf') {
-          const line = lineOf(inp.sourceSpan.start.offset);
-          const endLine = lineOf(tpl.sourceSpan.end.offset);
           guards.push({
-            expression: String(inp.value),
+            expression,
             line,
             kind: 'ngIf',
-            range: { startLine: line, endLine },
-          });
-        } else if (name === 'ngFor') {
-          const line = lineOf(inp.sourceSpan.start.offset);
-          const hasTrackBy = tpl.templateAttrs.some((a) => a.name === 'ngForTrackBy');
-          forLoops.push({
-            iterableExpression: String(inp.value),
-            hasTrackBy,
-            line,
+            range: { startLine: line, endLine: lineOf(tpl.sourceSpan.end.offset) },
           });
         }
+        collectFormBinding(name, expression, line, formBindings);
       }
+
+      if (ngFor) {
+        forLoops.push({
+          iterableExpression: ngFor.expression,
+          hasTrackBy: ngFor.hasTrackBy,
+          depth: loopDepth,
+          ...(ngFor.itemName ? { itemName: ngFor.itemName } : {}),
+          line: lineOf(ngFor.sourceSpanStart),
+        });
+      }
+
       super.visitTemplate(tpl);
+      if (ngFor) loopDepth--;
     }
-    override visitElement(_el: TmplAstElement): void {
-      super.visitElement(_el);
+
+    override visitElement(el: TmplAstElement): void {
+      elementDepth++;
+      elementCount++;
+      maxElementDepth = Math.max(maxElementDepth, elementDepth);
+      collectStaticFormBindings(el, lineOf(el.sourceSpan.start.offset), formBindings);
+      super.visitElement(el);
+      elementDepth--;
     }
   }
 
@@ -202,16 +296,32 @@ export function parseTemplateRef(ref: TemplateRef): TemplateAnalysis {
     guards,
     methodCalls,
     forLoops,
+    asyncPipes,
+    pipes,
+    dynamicBindings,
+    formBindings,
+    rendering: {
+      elementCount,
+      maxElementDepth,
+      loopCount: forLoops.length,
+      maxLoopDepth: forLoops.reduce((max, loop) => Math.max(max, loop.depth), 0),
+      hotBindingCount,
+      asyncPipeCount: asyncPipes.length,
+      pipeCount: pipes.length,
+      dynamicClassStyleCount: dynamicBindings.length,
+      formBindingCount: formBindings.length,
+    },
     diagnostics,
   };
 }
 
 function expressionText(value: unknown): string {
+  if (value === undefined || value === null) return '';
   const maybe = value as { source?: string; ast?: { source?: string }; toString?: () => string };
   const source = maybe.source ?? maybe.ast?.source;
   if (source) return normalizeExpressionText(source);
 
-  let text = maybe.toString ? maybe.toString() : String(value);
+  const text = maybe.toString ? maybe.toString() : String(value);
   return normalizeExpressionText(text.replace(/\s+in\s+.+@\d+:\d+$/s, ''));
 }
 
@@ -229,14 +339,6 @@ function offsetToLine(source: string, offset: number): number {
 }
 
 function linesBefore(startOffset: number, sourceFileText?: string): number {
-  // For inline templates: count newlines in the *.ts file from char 0 up to startOffset.
-  // We pass the full source slice because the orchestrator hands us the raw template
-  // string; the .ts file content is not available to template-parser. The component-scan
-  // step is responsible for passing a correct `startOffset` and the parser uses it
-  // by counting newlines in `fullSource.slice(0, startOffset)` — but since `fullSource`
-  // here is the *template*, this currently returns 0 for inline templates.
-  // The orchestrator translates inline template lines back to .ts file lines using
-  // the component descriptor's location + the template-local line returned here.
   if (!sourceFileText || startOffset <= 0) return 0;
   let lines = 0;
   const capped = Math.min(startOffset, sourceFileText.length);
@@ -247,18 +349,106 @@ function linesBefore(startOffset: number, sourceFileText?: string): number {
 }
 
 function collectMethodCalls(expr: string, line: number, inHotPath: boolean, out: TemplateMethodCall[]): void {
-  // Light, regex-based pass over the AST string. Angular's expression AST is
-  // available via the result; this implementation prefers the textual form
-  // because the rule pack only needs name + receiver, and the expr AST is
-  // expensive to walk for every binding.
-  // Matches identifiers immediately followed by `(`, optionally with a `.receiver` chain.
   const re = /(?:([A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(expr)) !== null) {
     const receiver = m[1] ?? '';
     const name = m[2]!;
-    // Filter out language builtins and pipe-like things by name.
     if (name === 'async' || name === 'json' || name === 'date') continue;
     out.push({ name, receiver, line, inHotPath });
   }
+}
+
+function collectPipes(
+  expr: string,
+  line: number,
+  inHotPath: boolean,
+  pipes: TemplatePipeBinding[],
+  asyncPipes: TemplateAsyncPipe[],
+  kind: TemplateBinding['kind'],
+): void {
+  const re = /(^|[^|])\|\s*([A-Za-z_$][\w$]*)\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(expr)) !== null) {
+    const name = match[2]!;
+    const pipedExpression = expr.slice(0, match.index + match[1]!.length).trim();
+    if (name === 'async') {
+      asyncPipes.push({ expression: normalizeAsyncPipeExpression(pipedExpression), line, kind });
+    } else {
+      pipes.push({ name, expression: expr, line, inHotPath });
+    }
+  }
+}
+
+function collectDynamicBinding(
+  name: string,
+  expression: string,
+  line: number,
+  out: TemplateDynamicBinding[],
+): void {
+  if (name === 'ngClass' || name.startsWith('class')) {
+    out.push({ kind: 'class', name, expression, line });
+  }
+  if (name === 'ngStyle' || name.startsWith('style')) {
+    out.push({ kind: 'style', name, expression, line });
+  }
+}
+
+function collectFormBinding(
+  name: string,
+  expression: string,
+  line: number,
+  out: TemplateFormBinding[],
+): void {
+  if (name === 'ngModel' || name === 'formControlName' || name === 'formGroup' || name === 'ngSubmit') {
+    out.push({ kind: name, expression, line });
+  }
+}
+
+function collectStaticFormBindings(el: TmplAstElement, line: number, out: TemplateFormBinding[]): void {
+  const attrs = (el as { attributes?: Array<{ name: string; value?: string }> }).attributes ?? [];
+  for (const attr of attrs) {
+    if (attr.name === 'ngModel' || attr.name === 'formControlName' || attr.name === 'formGroup') {
+      out.push({ kind: attr.name, expression: attr.value ?? '', line });
+    }
+  }
+}
+
+function readNgFor(tpl: TmplAstTemplate): {
+  expression: string;
+  hasTrackBy: boolean;
+  itemName?: string;
+  sourceSpanStart: number;
+} | undefined {
+  const attrs = tpl.templateAttrs;
+  const ngForAttr = attrs.find((a) => a.name === 'ngFor' || a.name === 'ngForOf');
+  if (!ngForAttr) return undefined;
+  const expression = expressionText((ngForAttr as { value?: unknown }).value);
+  const itemAttr = attrs.find((a) => a.name === 'ngFor');
+  const itemText = itemAttr ? expressionText((itemAttr as { value?: unknown }).value) : '';
+  const parsed = parseNgForExpression(itemText || expression);
+  return {
+    expression: parsed.iterableExpression || expression,
+    hasTrackBy: attrs.some((a) => a.name === 'ngForTrackBy'),
+    ...(parsed.itemName ? { itemName: parsed.itemName } : {}),
+    sourceSpanStart: ngForAttr.sourceSpan.start.offset,
+  };
+}
+
+function parseNgForExpression(text: string): { itemName?: string; iterableExpression: string } {
+  const match = /let\s+([A-Za-z_$][\w$]*)\s+of\s+(.+?)(?:;|$)/.exec(text);
+  if (!match) return { iterableExpression: text.trim() };
+  return {
+    itemName: match[1]!,
+    iterableExpression: match[2]!.trim(),
+  };
+}
+
+function readForBlockItem(blk: TmplAstForLoopBlock): string | undefined {
+  const item = (blk as { item?: { name?: string } }).item?.name;
+  return item && item.trim().length > 0 ? item.trim() : undefined;
+}
+
+function normalizeAsyncPipeExpression(expression: string): string {
+  return expression.replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
 }

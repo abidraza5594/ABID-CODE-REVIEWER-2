@@ -41,16 +41,27 @@ export const templateMethodCallRule = {
         for (const call of analysis.methodCalls) {
           if (!call.inHotPath) continue;
           if (!isAddedLine(ctx, tplRef.file, call.line)) continue;
-          // Filter known-cheap calls.
-          if (isPureLookup(call.name)) continue;
+          const method = comp.methods.find((candidate) => candidate.name === call.name);
+          const methodCost = method ? renderCostOfMethod(method.text) : 0;
+          // Filter known-cheap calls unless the TypeScript body proves work.
+          if (isPureLookup(call.name) && methodCost < 2) continue;
 
           const evidence: Evidence[] = [
             {
               kind: 'ast',
               nodeKind: 'CallExpression',
-              description: `template calls ${call.name}() on every change detection cycle`,
+              description: methodCost >= 2
+                ? `template calls ${call.name}() on every change detection cycle; the method body does repeated work`
+                : `template calls ${call.name}() on every change detection cycle`,
             },
           ];
+          if (method) {
+            evidence.push({
+              kind: 'callgraph',
+              path: [`template:${call.name}()`, `${comp.className}.${method.name}()`],
+              description: `template binding resolves to ${method.name} in ${comp.className}`,
+            });
+          }
 
           const slice = ctx.runtime?.byComponent.get(comp.className);
           if (slice && slice.avgRenderCount > 50) {
@@ -67,7 +78,7 @@ export const templateMethodCallRule = {
           out.push({
             ruleId: 'angular/template-method-call',
             severity: 'warn',
-            confidence: 0.65,
+            confidence: methodCost >= 2 ? 0.78 : 0.65,
             location: { file: tplRef.file, startLine: call.line },
             evidence,
             guarantees,
@@ -95,6 +106,14 @@ function isPureLookup(name: string): boolean {
 
 function toCachedName(methodName: string): string {
   return `${methodName.replace(/^[A-Z]/, (c) => c.toLowerCase())}Value`;
+}
+
+function renderCostOfMethod(text: string): number {
+  let score = 0;
+  score += (text.match(/\.(map|filter|reduce|sort|find|some|every)\s*\(/g) ?? []).length * 2;
+  score += (text.match(/\b(for|while|switch|if)\b/g) ?? []).length;
+  score += (text.match(/\b(http|httpClient|Service|Api|Client)\b/g) ?? []).length;
+  return score;
 }
 
 function isAddedLine(ctx: RuleContext, file: string, line: number): boolean {
