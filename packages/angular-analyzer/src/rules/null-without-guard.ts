@@ -1,6 +1,7 @@
 import type { Evidence, Guarantee } from '@abid/core';
 import { parseTemplateRef, resolveBindings } from '@abid/ast-engine';
 import type { RawFinding, RuleContext } from '../rule-context.js';
+import { componentFieldInitializationProof } from './nullability-proof.js';
 
 /**
  * angular/null-without-guard
@@ -39,6 +40,11 @@ export const nullWithoutGuardRule = {
           if (b.kind !== 'resolved') continue;        // unknown root → don't false-positive
           if (!b.allowsNullish) continue;             // type forbids null/undefined
           if (b.expression === b.rootSymbol) continue; // bare reference, no member access
+          if (b.rootField) {
+            const proof = componentFieldInitializationProof(ctx.project, comp.tsFile, comp.className, b.rootField.name);
+            if (proof.verdict === 'not-null') continue;
+            if (proof.verdict === 'unresolved' && proof.imported) continue;
+          }
 
           // Async pipe?
           if (/^\s*\(?\s*[A-Za-z_$][\w$]*\$\s*\|\s*async/.test(b.expression)) continue;

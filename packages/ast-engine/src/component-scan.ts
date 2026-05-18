@@ -374,6 +374,8 @@ function extractFields(cls: ClassDeclaration, _project: AstProject): FieldDescri
         else if (head === 'inject') kind = 'inject';
       } else if (
         init.getKind() === SyntaxKind.StringLiteral ||
+        init.getKind() === SyntaxKind.ArrayLiteralExpression ||
+        init.getKind() === SyntaxKind.ObjectLiteralExpression ||
         init.getKind() === SyntaxKind.NumericLiteral ||
         init.getKind() === SyntaxKind.TrueKeyword ||
         init.getKind() === SyntaxKind.FalseKeyword
@@ -384,7 +386,7 @@ function extractFields(cls: ClassDeclaration, _project: AstProject): FieldDescri
 
     const type = field.getType();
     const typeText = type.getText();
-    const allowsNullish = type.isNullable() || /\b(null|undefined)\b/.test(typeText);
+    const allowsNullish = typeAllowsNullish(type);
 
     out.push({
       name,
@@ -396,6 +398,16 @@ function extractFields(cls: ClassDeclaration, _project: AstProject): FieldDescri
     });
   }
   return out;
+}
+
+function typeAllowsNullish(type: import('ts-morph').Type): boolean {
+  if (type.isNullable()) return true;
+  if (!type.isUnion()) return false;
+  return type.getUnionTypes().some((part) =>
+    part.isNull() ||
+    part.isUndefined() ||
+    part.getText() === 'void',
+  );
 }
 
 function lineColOf(sf: SourceFile, node: Node, project: AstProject): SourceLocation {

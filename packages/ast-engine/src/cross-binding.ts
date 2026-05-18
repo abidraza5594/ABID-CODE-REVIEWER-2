@@ -141,6 +141,16 @@ function narrowAlongChain(
 
   return {
     typeText: currentType.getText(),
-    allowsNullish: currentType.isNullable() || /\b(null|undefined)\b/.test(currentType.getText()),
+    allowsNullish: typeAllowsNullish(currentType),
   };
+}
+
+function typeAllowsNullish(type: import('ts-morph').Type): boolean {
+  if (type.isNullable()) return true;
+  if (!type.isUnion()) return false;
+  return type.getUnionTypes().some((part) =>
+    part.isNull() ||
+    part.isUndefined() ||
+    part.getText() === 'void',
+  );
 }

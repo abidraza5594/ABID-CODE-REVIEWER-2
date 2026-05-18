@@ -11,6 +11,7 @@ import {
 } from 'ts-morph';
 import type { RawFinding, RuleContext } from '../rule-context.js';
 import { looksLikeFiniteApiObservable, looksLongLivedObservable } from './typescript-engineering.js';
+import { repositoryValueProof, typeAllowsNullish } from './nullability-proof.js';
 
 export const tsNullDereferenceRule = {
   id: 'angular/ts-null-dereference',
@@ -36,10 +37,13 @@ export const tsNullDereferenceRule = {
 
         const type = expr.getType();
         const typeText = type.getText();
-        if (!allowsNullish(type, typeText)) return;
+        if (!typeAllowsNullish(type)) return;
 
         const root = rootGuardExpression(expr);
         if (!root || hasLocalNullGuard(node, root)) return;
+        const repoProof = repositoryValueProof(ctx.project, sourceFile, expr);
+        if (repoProof.verdict === 'not-null') return;
+        if (repoProof.verdict === 'unresolved' && repoProof.imported) return;
 
         out.push({
           ruleId: 'angular/ts-null-dereference',
@@ -61,6 +65,9 @@ export const tsNullDereferenceRule = {
             },
           ],
           guarantees: [],
+          ...(repoProof.verdict === 'nullable'
+            ? { notes: `Import trace: ${repoProof.reason}.` }
+            : {}),
           message: {
             title: 'This access can crash when the value is missing',
             body: '',
@@ -1275,10 +1282,6 @@ function changedLineInsideNode(
     .find((candidate) => location.startLine <= candidate && candidate <= (location.endLine ?? location.startLine));
   if (line === undefined) return undefined;
   return { file, startLine: line, endLine: line, startColumn: 0, endColumn: 0 };
-}
-
-function allowsNullish(type: import('ts-morph').Type, typeText: string): boolean {
-  return type.isNullable() || /\b(null|undefined)\b/.test(typeText);
 }
 
 function isPartOfOptionalChain(node: TsMorphNode): boolean {
